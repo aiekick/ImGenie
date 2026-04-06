@@ -116,7 +116,7 @@ typedef struct ImGeniePageCurlParams {
 
 typedef int ImGenieSlideDir;
 enum ImGenieSlideDir_ {
-    ImGenieSlideDir_Auto = 0,       // Auto-detect closest edge or corner
+    ImGenieSlideDir_Auto = 0,  // Auto-detect closest edge or corner
     ImGenieSlideDir_Left,
     ImGenieSlideDir_Right,
     ImGenieSlideDir_Top,
@@ -140,8 +140,8 @@ typedef struct ImGenieSpringParams {
 
 typedef struct ImGenieSlideParams {
     ImGenieSlideDir dir;
-    float autoCornerRatio;    // Corner zone ratio for Auto detection (0..0.5, default 0.25 = 1/4 of each edge)
-    bool wobbly;              // Trailing edge follows via spring physics (rubber stretch)
+    float autoCornerRatio;  // Corner zone ratio for Auto detection (0..0.5, default 0.25 = 1/4 of each edge)
+    bool wobbly;            // Trailing edge follows via spring physics (rubber stretch)
     ImGenieSpringParams spring;
 #ifdef __cplusplus
     ImGenieSlideParams() : dir(ImGenieSlideDir_Auto), autoCornerRatio(0.15f), wobbly(false), spring() {}
@@ -150,7 +150,7 @@ typedef struct ImGenieSlideParams {
 
 typedef struct ImGenieWobblyParams {
     ImGenieSpringParams spring;
-    float maxStiffness;       // Overrides spring.stiffness at grab point (varies with distance)
+    float maxStiffness;  // Overrides spring.stiffness at grab point (varies with distance)
     float settleDuration;
 #ifdef __cplusplus
     ImGenieWobblyParams() : spring(), maxStiffness(200.0f), settleDuration(0.15f) {}
@@ -314,7 +314,6 @@ typedef struct ImGenieContext ImGenieContext;
 // The wrapper binding is responsible for casting to/from the correct types.
 typedef void* (*ImGenie_CreateCaptureFunc)(int32_t aWidth, int32_t aHeight, void* apDrawData);
 typedef void (*ImGenie_DestroyCaptureFunc)(void* apTex);
-
 
 IMGENIE_C_API const char* ImGenie_GetVersion(void);
 IMGENIE_C_API int ImGenie_GetVersionNum(void);
