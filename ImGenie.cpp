@@ -268,38 +268,51 @@ static void s_scaleAnimate(ImDrawList* apDrawList,
 }
 
 // Resolve auto slide directions to a concrete edge or corner.
-static ImGenieSlideDir s_resolveSlideDir(const ImRect& arSource, ImGenieSlideDir aDir = ImGenieSlideDir_Auto) {
+static ImGenieSlideDir s_resolveSlideDir(const ImRect& arSource, ImGenieSlideDir aDir = ImGenieSlideDir_Auto, float aCornerRatio = 0.15f) {
+    if (aDir != ImGenieSlideDir_Auto) return aDir;
     const auto& displaySize = ImGui::GetIO().DisplaySize;
     const auto center = arSource.GetCenter();
+    // Split viewport into 3 zones per axis: 0 = start, 1 = middle, 2 = end
+    const float r = ImClamp(aCornerRatio, 0.0f, 0.5f);
+    const float zw = displaySize.x * r;
+    const float zh = displaySize.y * r;
+    auto zoneH = [&](float x) -> int { return (x < zw) ? 0 : (x > displaySize.x - zw) ? 2 : 1; };
+    auto zoneV = [&](float y) -> int { return (y < zh) ? 0 : (y > displaySize.y - zh) ? 2 : 1; };
+    // Classify each frame edge into a viewport zone
+    //   Edge 0 (top=Min.y) → V zone,  Edge 2 (bottom=Max.y) → V zone
+    //   Edge 3 (left=Min.x) → H zone, Edge 1 (right=Max.x)  → H zone
+    const int zt = zoneV(arSource.Min.y);  // top border
+    const int zb = zoneV(arSource.Max.y);  // bottom border
+    const int zl = zoneH(arSource.Min.x);  // left border
+    const int zr = zoneH(arSource.Max.x);  // right border
+    // Resolve each axis: same zone → that zone, one corner + middle → corner, spans 0..2 → middle
+    //   H: zl <= zr always.  (0,0)→0  (0,1)→0  (0,2)→1  (1,1)→1  (1,2)→2  (2,2)→2
+    //   V: zt <= zb always.  same pattern
+    auto resolve = [](int a, int b) -> int { return (a == b) ? a : (b - a >= 2) ? 1 : (a == 0) ? 0 : 2; };
+    const int rH = resolve(zl, zr);  // 0=left, 1=middle, 2=right
+    const int rV = resolve(zt, zb);  // 0=top,  1=middle, 2=bottom
+    //  rH\rV:   0(top)      1(mid)     2(bot)
+    //  0(left)  TopLeft     Left       BottomLeft
+    //  1(mid)   Top         FALLBACK   Bottom
+    //  2(right) TopRight    Right      BottomRight
+    if (rH == 0 && rV == 0) return ImGenieSlideDir_TopLeft;
+    if (rH == 2 && rV == 0) return ImGenieSlideDir_TopRight;
+    if (rH == 0 && rV == 2) return ImGenieSlideDir_BottomLeft;
+    if (rH == 2 && rV == 2) return ImGenieSlideDir_BottomRight;
+    if (rV == 0) return ImGenieSlideDir_Top;
+    if (rV == 2) return ImGenieSlideDir_Bottom;
+    if (rH == 0) return ImGenieSlideDir_Left;
+    if (rH == 2) return ImGenieSlideDir_Right;
+    // Fallback (1,1): window in center — pick closest edge
     const float distLeft = center.x;
     const float distRight = displaySize.x - center.x;
     const float distTop = center.y;
     const float distBottom = displaySize.y - center.y;
-    if (aDir == ImGenieSlideDir_AutoEdge || aDir == ImGenieSlideDir_Auto) {
-        const float minEdge = ImMin(ImMin(distLeft, distRight), ImMin(distTop, distBottom));
-        ImGenieSlideDir bestEdge = ImGenieSlideDir_Down;
-        if (minEdge == distLeft) bestEdge = ImGenieSlideDir_Left;
-        else if (minEdge == distRight) bestEdge = ImGenieSlideDir_Right;
-        else if (minEdge == distTop) bestEdge = ImGenieSlideDir_Up;
-        if (aDir == ImGenieSlideDir_AutoEdge) return bestEdge;
-        // Auto: pick whichever is closer — edge or corner
-        const float minCorner = ImMin(ImMin(distLeft + distTop, distRight + distTop), ImMin(distLeft + distBottom, distRight + distBottom));
-        if (minEdge <= minCorner) return bestEdge;
-        // Fall through to corner resolution
-    }
-    // AutoCorner or Auto fallback
-    if (aDir == ImGenieSlideDir_AutoCorner || aDir == ImGenieSlideDir_Auto) {
-        const float dTL = distLeft + distTop;
-        const float dTR = distRight + distTop;
-        const float dBL = distLeft + distBottom;
-        const float dBR = distRight + distBottom;
-        const float minC = ImMin(ImMin(dTL, dTR), ImMin(dBL, dBR));
-        if (minC == dTL) return ImGenieSlideDir_TopLeft;
-        if (minC == dTR) return ImGenieSlideDir_TopRight;
-        if (minC == dBL) return ImGenieSlideDir_BottomLeft;
-        return ImGenieSlideDir_BottomRight;
-    }
-    return aDir;  // Already concrete
+    const float minEdge = ImMin(ImMin(distLeft, distRight), ImMin(distTop, distBottom));
+    if (minEdge == distLeft) return ImGenieSlideDir_Left;
+    if (minEdge == distRight) return ImGenieSlideDir_Right;
+    if (minEdge == distTop) return ImGenieSlideDir_Top;
+    return ImGenieSlideDir_Bottom;
 }
 
 // Slide: translate off-screen. aAnimT: 0 = fully off-screen, 1 = fully visible.
@@ -313,7 +326,7 @@ static void s_slideAnimate(ImDrawList* apDrawList,
                            const ImGenieSlideParams& arSlideParams,
                            bool aFlipV = false) {
     if (!apDrawList || arTexture._TexID == 0 || aAnimT <= 0.0f) { return; }
-    const auto dir = s_resolveSlideDir(arSource, arSlideParams.dir);
+    const auto dir = s_resolveSlideDir(arSource, arSlideParams.dir, arSlideParams.autoCornerRatio);
     const auto t = ImClamp(aAnimT, 0.0f, 1.0f);
     const auto eased = t * t * (3.0f - 2.0f * t);
     const auto& displaySize = ImGui::GetIO().DisplaySize;
@@ -323,9 +336,9 @@ static void s_slideAnimate(ImDrawList* apDrawList,
         fullDistX = -arSource.Max.x;
     else if (dir == ImGenieSlideDir_Right || dir == ImGenieSlideDir_TopRight || dir == ImGenieSlideDir_BottomRight)
         fullDistX = displaySize.x - arSource.Min.x;
-    if (dir == ImGenieSlideDir_Up || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
+    if (dir == ImGenieSlideDir_Top || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
         fullDistY = -arSource.Max.y;
-    else if (dir == ImGenieSlideDir_Down || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
+    else if (dir == ImGenieSlideDir_Bottom || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
         fullDistY = displaySize.y - arSource.Min.y;
     const ImVec2 fullOff(fullDistX * (1.0f - eased), fullDistY * (1.0f - eased));
     // p00=TL, p10=TR, p01=BL, p11=BR
@@ -339,8 +352,8 @@ static void s_slideAnimate(ImDrawList* apDrawList,
         switch (dir) {
             case ImGenieSlideDir_Left:        pinned[0] = pinned[2] = true; break;
             case ImGenieSlideDir_Right:       pinned[1] = pinned[3] = true; break;
-            case ImGenieSlideDir_Up:          pinned[0] = pinned[1] = true; break;
-            case ImGenieSlideDir_Down:        pinned[2] = pinned[3] = true; break;
+            case ImGenieSlideDir_Top:          pinned[0] = pinned[1] = true; break;
+            case ImGenieSlideDir_Bottom:        pinned[2] = pinned[3] = true; break;
             case ImGenieSlideDir_TopLeft:     pinned[0] = true; break;
             case ImGenieSlideDir_TopRight:    pinned[1] = true; break;
             case ImGenieSlideDir_BottomLeft:  pinned[2] = true; break;
@@ -615,8 +628,8 @@ static void s_latticeAnimate(ImDrawList* apDrawList,
 
 // ---------- Debug mesh ----------
 
-static void s_drawDebugMesh(ImDrawList* apDrawList, const ImGenieEffect& arEffect) {
-    if (arEffect.params.drawDebugMesh && !apDrawList->CmdBuffer.empty()) {
+static void s_drawDebug(ImDrawList* apDrawList, const ImGenieEffect& arEffect) {
+    if (arEffect.params.drawDebug && !apDrawList->CmdBuffer.empty()) {
         auto* pCmd = &apDrawList->CmdBuffer.front();
         ImGui::DebugNodeDrawCmdShowMeshAndBoundingBox(apDrawList, apDrawList, pCmd, true, true);
     }
@@ -836,7 +849,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
     // ==================== Active effect handling ====================
     if (it != ctx.effects.end()) {
         auto& effect = it->second;
-        // Update params each frame, and track button position (destRect follows genie params)
+        // Topdate params each frame, and track button position (destRect follows genie params)
         effect.params = params;
         const auto& dr = params.transitions.genie.destRect;
         effect.destRect = ImRect(dr.minX, dr.minY, dr.maxX, dr.maxY);
@@ -893,16 +906,16 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                 const auto& slideP = effect.params.transitions.slide;
                 if (slideP.wobbly) {
                     // Pin leading corners to their animated off-screen position, spring-simulate trailing corners
-                    const auto dir = s_resolveSlideDir(effect.sourceRect, slideP.dir);
+                    const auto dir = s_resolveSlideDir(effect.sourceRect, slideP.dir, slideP.autoCornerRatio);
                     const auto& dispSize = ImGui::GetIO().DisplaySize;
                     float fullDistX = 0.0f, fullDistY = 0.0f;
                     if (dir == ImGenieSlideDir_Left || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_BottomLeft)
                         fullDistX = -effect.sourceRect.Max.x;
                     else if (dir == ImGenieSlideDir_Right || dir == ImGenieSlideDir_TopRight || dir == ImGenieSlideDir_BottomRight)
                         fullDistX = dispSize.x - effect.sourceRect.Min.x;
-                    if (dir == ImGenieSlideDir_Up || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
+                    if (dir == ImGenieSlideDir_Top || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
                         fullDistY = -effect.sourceRect.Max.y;
-                    else if (dir == ImGenieSlideDir_Down || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
+                    else if (dir == ImGenieSlideDir_Bottom || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
                         fullDistY = dispSize.y - effect.sourceRect.Min.y;
                     const auto t = ImClamp(effect.animT, 0.0f, 1.0f);
                     const auto eased = t * t * (3.0f - 2.0f * t);
@@ -912,8 +925,8 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                     switch (dir) {
                         case ImGenieSlideDir_Left:        pinned[0] = pinned[2] = true; break;
                         case ImGenieSlideDir_Right:       pinned[1] = pinned[3] = true; break;
-                        case ImGenieSlideDir_Up:          pinned[0] = pinned[1] = true; break;
-                        case ImGenieSlideDir_Down:        pinned[2] = pinned[3] = true; break;
+                        case ImGenieSlideDir_Top:          pinned[0] = pinned[1] = true; break;
+                        case ImGenieSlideDir_Bottom:        pinned[2] = pinned[3] = true; break;
                         case ImGenieSlideDir_TopLeft:     pinned[0] = true; break;
                         case ImGenieSlideDir_TopRight:    pinned[1] = true; break;
                         case ImGenieSlideDir_BottomLeft:  pinned[2] = true; break;
@@ -960,7 +973,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                                  effect.params.transitions.genie.animMode,
                                  effect.resolvedSide, ctx.captureFlipV);
             }
-            s_drawDebugMesh(pDrawList, effect);
+            s_drawDebug(pDrawList, effect);
             *apoOpen = false;
             return false;
         }
@@ -1004,16 +1017,16 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                 if (slideP.wobbly) {
                     // Appearing: springs started off-screen, converge to source rect
                     // Leading corners are pinned to the lerped position, trailing corners spring-follow
-                    const auto dir = s_resolveSlideDir(effect.sourceRect, slideP.dir);
+                    const auto dir = s_resolveSlideDir(effect.sourceRect, slideP.dir, slideP.autoCornerRatio);
                     const auto& dispSize = ImGui::GetIO().DisplaySize;
                     float fullDistX = 0.0f, fullDistY = 0.0f;
                     if (dir == ImGenieSlideDir_Left || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_BottomLeft)
                         fullDistX = -effect.sourceRect.Max.x;
                     else if (dir == ImGenieSlideDir_Right || dir == ImGenieSlideDir_TopRight || dir == ImGenieSlideDir_BottomRight)
                         fullDistX = dispSize.x - effect.sourceRect.Min.x;
-                    if (dir == ImGenieSlideDir_Up || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
+                    if (dir == ImGenieSlideDir_Top || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
                         fullDistY = -effect.sourceRect.Max.y;
-                    else if (dir == ImGenieSlideDir_Down || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
+                    else if (dir == ImGenieSlideDir_Bottom || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
                         fullDistY = dispSize.y - effect.sourceRect.Min.y;
                     const auto t = ImClamp(effect.animT, 0.0f, 1.0f);
                     const auto eased = t * t * (3.0f - 2.0f * t);
@@ -1022,8 +1035,8 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                     switch (dir) {
                         case ImGenieSlideDir_Left:        pinned[0] = pinned[2] = true; break;
                         case ImGenieSlideDir_Right:       pinned[1] = pinned[3] = true; break;
-                        case ImGenieSlideDir_Up:          pinned[0] = pinned[1] = true; break;
-                        case ImGenieSlideDir_Down:        pinned[2] = pinned[3] = true; break;
+                        case ImGenieSlideDir_Top:          pinned[0] = pinned[1] = true; break;
+                        case ImGenieSlideDir_Bottom:        pinned[2] = pinned[3] = true; break;
                         case ImGenieSlideDir_TopLeft:     pinned[0] = true; break;
                         case ImGenieSlideDir_TopRight:    pinned[1] = true; break;
                         case ImGenieSlideDir_BottomLeft:  pinned[2] = true; break;
@@ -1067,7 +1080,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                                  effect.params.transitions.genie.animMode,
                                  effect.resolvedSide, ctx.captureFlipV);
             }
-            s_drawDebugMesh(pDrawList, effect);
+            s_drawDebug(pDrawList, effect);
             *apoOpen = false;
             return false;
         }
@@ -1163,7 +1176,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                           effect.params.effects.wobbly.spring.cellsV,
                           effect.params.transitions.genie.animMode,
                           ctx.captureFlipV);
-            s_drawDebugMesh(pDrawList, effect);
+            s_drawDebug(pDrawList, effect);
             return true;
         }
         return true;
@@ -1319,16 +1332,16 @@ void ImGenie::Capture() {
                 effect.animT = 0.0f;
                 // Init springs for slide wobbly (appearing: start from off-screen)
                 if (effect.params.transitions.transitionMode == ImGenieTransitionMode_Slide && effect.params.transitions.slide.wobbly) {
-                    const auto dir = s_resolveSlideDir(effect.sourceRect, effect.params.transitions.slide.dir);
+                    const auto dir = s_resolveSlideDir(effect.sourceRect, effect.params.transitions.slide.dir, effect.params.transitions.slide.autoCornerRatio);
                     const auto& displaySize = ImGui::GetIO().DisplaySize;
                     float fullDistX = 0.0f, fullDistY = 0.0f;
                     if (dir == ImGenieSlideDir_Left || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_BottomLeft)
                         fullDistX = -effect.sourceRect.Max.x;
                     else if (dir == ImGenieSlideDir_Right || dir == ImGenieSlideDir_TopRight || dir == ImGenieSlideDir_BottomRight)
                         fullDistX = displaySize.x - effect.sourceRect.Min.x;
-                    if (dir == ImGenieSlideDir_Up || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
+                    if (dir == ImGenieSlideDir_Top || dir == ImGenieSlideDir_TopLeft || dir == ImGenieSlideDir_TopRight)
                         fullDistY = -effect.sourceRect.Max.y;
-                    else if (dir == ImGenieSlideDir_Down || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
+                    else if (dir == ImGenieSlideDir_Bottom || dir == ImGenieSlideDir_BottomLeft || dir == ImGenieSlideDir_BottomRight)
                         fullDistY = displaySize.y - effect.sourceRect.Min.y;
                     const ImVec2 off(fullDistX, fullDistY);
                     ImVec2 corners[4];
@@ -1431,7 +1444,7 @@ void ImGenie::ShowDemoWindow(bool* apoOpen, ImGenieParams* apoParams, ImGeniePar
     ImGui::SameLine();
     if (ImGui::Button("Save to Defaults")) { *pDefaultParams = *pParams; }
     ImGui::SameLine();
-    ImGui::Checkbox("Draw Debug Mesh", &pParams->drawDebugMesh);
+    ImGui::Checkbox("Draw Debug", &pParams->drawDebug);
     if (ImGui::CollapsingHeader("Transitions", ImGuiTreeNodeFlags_DefaultOpen)) {
         auto transitionModeIdx = static_cast<int>(pParams->transitions.transitionMode);
         if (ImGui::Combo("Transition Mode", &transitionModeIdx, "None\0Genie\0Page Curl\0Fade\0Scale\0Slide\0\0")) {
@@ -1458,8 +1471,63 @@ void ImGenie::ShowDemoWindow(bool* apoOpen, ImGenieParams* apoParams, ImGeniePar
         }
         if (pParams->transitions.transitionMode == ImGenieTransitionMode_Slide) {
             auto dirIdx = pParams->transitions.slide.dir;
-            if (ImGui::Combo("Direction", &dirIdx, "Auto\0Auto Edge\0Auto Corner\0Left\0Right\0Up\0Down\0Top-Left\0Top-Right\0Bottom-Left\0Bottom-Right\0\0")) {
+            if (ImGui::Combo("Direction", &dirIdx, "Auto\0Left\0Right\0Top\0Bottom\0Top-Left\0Top-Right\0Bottom-Left\0Bottom-Right\0\0")) {
                 pParams->transitions.slide.dir = dirIdx;
+            }
+            if (pParams->transitions.slide.dir == ImGenieSlideDir_Auto) {
+                ImGui::SliderFloat("Corner Ratio", &pParams->transitions.slide.autoCornerRatio, 0.05f, 0.5f, "%.2f");
+                // Draw debug zones on viewport edges when drawDebug is enabled
+                if (pParams->drawDebug) {
+                    const auto& dispSize = ImGui::GetIO().DisplaySize;
+                    const float r = ImClamp(pParams->transitions.slide.autoCornerRatio, 0.0f, 0.5f);
+                    const float zw = dispSize.x * r;
+                    const float zh = dispSize.y * r;
+                    auto* pDL = ImGui::GetForegroundDrawList();
+                    const ImU32 colCorner = IM_COL32(255, 100, 100, 60);
+                    const ImU32 colEdge = IM_COL32(100, 100, 255, 60);
+                    // colCorners: TL=0, TR=1, BL=2, BR=3
+                    // colEdges:   Top=0, Right=1, Bottom=2, Left=3
+                    ImU32 colCorners[4] = {colCorner, colCorner, colCorner, colCorner};
+                    ImU32 colEdges[4] = {colEdge, colEdge, colEdge, colEdge};
+                    const float t = 10.0f;  // zone thickness
+
+                    // Highlight the resolved zone for the focused window only
+                    const ImU32 colHighlight = IM_COL32(255, 255, 0, 140);
+                    auto* pFocused = GImGui->NavWindow;
+                    if (pFocused && ctx.openStates.count(pFocused->ID) && ctx.openStates[pFocused->ID]) {
+                        const ImRect winRect = pFocused->Rect();
+                        const auto resolved = s_resolveSlideDir(winRect, ImGenieSlideDir_Auto, r);
+                        switch (resolved) {
+                            case ImGenieSlideDir_TopLeft:     colCorners[0] = colHighlight; break;
+                            case ImGenieSlideDir_TopRight:    colCorners[1] = colHighlight; break;
+                            case ImGenieSlideDir_BottomLeft:  colCorners[2] = colHighlight; break;
+                            case ImGenieSlideDir_BottomRight: colCorners[3] = colHighlight; break;
+                            case ImGenieSlideDir_Top:          colEdges[0] = colHighlight; break;
+                            case ImGenieSlideDir_Right:       colEdges[1] = colHighlight; break;
+                            case ImGenieSlideDir_Bottom:        colEdges[2] = colHighlight; break;
+                            case ImGenieSlideDir_Left:        colEdges[3] = colHighlight; break;
+                            default: break;
+                        }
+                    }
+
+                    // Top edge: TL corner | Top edge | TR corner
+                    pDL->AddRectFilled(ImVec2(0, 0), ImVec2(zw, t), colCorners[0]);
+                    pDL->AddRectFilled(ImVec2(zw, 0), ImVec2(dispSize.x - zw, t), colEdges[0]);
+                    pDL->AddRectFilled(ImVec2(dispSize.x - zw, 0), ImVec2(dispSize.x, t), colCorners[1]);
+                    // Right edge: TR corner | Right edge | BR corner
+                    pDL->AddRectFilled(ImVec2(dispSize.x - t, 0), ImVec2(dispSize.x, zh), colCorners[1]);
+                    pDL->AddRectFilled(ImVec2(dispSize.x - t, zh), ImVec2(dispSize.x, dispSize.y - zh), colEdges[1]);
+                    pDL->AddRectFilled(ImVec2(dispSize.x - t, dispSize.y - zh), ImVec2(dispSize.x, dispSize.y), colCorners[3]);
+                    // Bottom edge: BL corner | Bottom edge | BR corner
+                    pDL->AddRectFilled(ImVec2(0, dispSize.y - t), ImVec2(zw, dispSize.y), colCorners[2]);
+                    pDL->AddRectFilled(ImVec2(zw, dispSize.y - t), ImVec2(dispSize.x - zw, dispSize.y), colEdges[2]);
+                    pDL->AddRectFilled(ImVec2(dispSize.x - zw, dispSize.y - t), ImVec2(dispSize.x, dispSize.y), colCorners[3]);
+                    // Left edge: TL corner | Left edge | BL corner
+                    pDL->AddRectFilled(ImVec2(0, 0), ImVec2(t, zh), colCorners[0]);
+                    pDL->AddRectFilled(ImVec2(0, zh), ImVec2(t, dispSize.y - zh), colEdges[3]);
+                    pDL->AddRectFilled(ImVec2(0, dispSize.y - zh), ImVec2(t, dispSize.y), colCorners[2]);
+                    
+                }
             }
             ImGui::Checkbox("Wobbly", &pParams->transitions.slide.wobbly);
             if (pParams->transitions.slide.wobbly) {

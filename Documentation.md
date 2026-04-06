@@ -136,7 +136,7 @@ Settings can be passed per-window via the `apSettings` parameter of `Allow` / `B
 
 | Field | Type | Description |
 |---|---|---|
-| `drawDebugMesh` | `bool` | Draw the deformation mesh wireframe (debug) |
+| `drawDebug` | `bool` | Draw the deformation mesh wireframe (debug) |
 | `transitions` | `ImGenieTransitions` | Appear/disappear transition settings |
 | `effects` | `ImGenieEffects` | Runtime effect settings |
 
@@ -263,12 +263,10 @@ Direction for the Slide transition.
 | Value | Description |
 |---|---|
 | `ImGenieSlideDir_Auto` | Auto-detect closest viewport edge or corner |
-| `ImGenieSlideDir_AutoEdge` | Auto-detect closest viewport edge only |
-| `ImGenieSlideDir_AutoCorner` | Auto-detect closest viewport corner only |
 | `ImGenieSlideDir_Left` | Slide toward left edge |
 | `ImGenieSlideDir_Right` | Slide toward right edge |
-| `ImGenieSlideDir_Up` | Slide toward top edge |
-| `ImGenieSlideDir_Down` | Slide toward bottom edge |
+| `ImGenieSlideDir_Top` | Slide toward top edge |
+| `ImGenieSlideDir_Bottom` | Slide toward bottom edge |
 | `ImGenieSlideDir_TopLeft` | Slide toward top-left corner |
 | `ImGenieSlideDir_TopRight` | Slide toward top-right corner |
 | `ImGenieSlideDir_BottomLeft` | Slide toward bottom-left corner |
