@@ -24,11 +24,13 @@ SOFTWARE.
 
 #pragma once
 
-// ImGenie, v0.1.0
-// macOS-style Genie effect and Wobbly windows for Dear ImGui
-
 #define IMGENIE_VERSION "0.1.0"
 #define IMGENIE_VERSION_NUM 00100
+
+// ImGenie
+// macOS-style Genie effect and Wobbly windows for Dear ImGui
+
+// See Documentation.md for usage, integration examples (OpenGL, Vulkan), settings reference and C API.
 
 #ifndef IMGENIE_API
 #define IMGENIE_API
@@ -54,13 +56,92 @@ enum ImGenieAnimMode_ {
     ImGenieAnimMode_Sliding,
 };
 
-// C-compatible rect struct
-typedef struct ImGenie_Rect {
-    float minX;
-    float minY;
-    float maxX;
-    float maxY;
-} ImGenie_Rect;
+typedef int ImGenieTransitionMode;
+enum ImGenieTransitionMode_ {
+    ImGenieTransitionMode_None = 0,
+    ImGenieTransitionMode_Genie,
+    ImGenieTransitionMode_PageCurl,
+};
+
+typedef int ImGeniePageCurlOrigin;
+enum ImGeniePageCurlOrigin_ {
+    ImGeniePageCurlOrigin_TopLeft = 0,
+    ImGeniePageCurlOrigin_Top,
+    ImGeniePageCurlOrigin_TopRight,
+    ImGeniePageCurlOrigin_Right,
+    ImGeniePageCurlOrigin_BottomRight,
+    ImGeniePageCurlOrigin_Bottom,
+    ImGeniePageCurlOrigin_BottomLeft,
+    ImGeniePageCurlOrigin_Left,
+};
+
+typedef int ImGenieEffectMode;
+enum ImGenieEffectMode_ {
+    ImGenieEffectMode_None = 0,
+    ImGenieEffectMode_Wobbly,
+};
+
+// Settings structs — C and C++ compatible
+// In C, use ImGenie_DefaultSettings() to get a properly initialized instance.
+typedef struct ImGenieGenieParams {
+    int32_t cellsV;
+    int32_t cellsH;
+    float animDuration;
+    ImGenieSide side;
+    ImGenieAnimMode animMode;
+#ifdef __cplusplus
+    ImGenieGenieParams() : cellsV(20), cellsH(1), animDuration(0.5f), side(ImGenieSide_Auto), animMode(ImGenieAnimMode_Compress) {}
+#endif
+} ImGenieGenieParams;
+
+typedef struct ImGeniePageCurlParams {
+    int32_t cellsH;
+    int32_t cellsV;
+    float animDuration;
+    ImGeniePageCurlOrigin origin;
+#ifdef __cplusplus
+    ImGeniePageCurlParams() : cellsH(30), cellsV(30), animDuration(0.4f), origin(ImGeniePageCurlOrigin_BottomLeft) {}
+#endif
+} ImGeniePageCurlParams;
+
+typedef struct ImGenieWobblyParams {
+    int32_t cellsV;
+    int32_t cellsH;
+    float maxStiffness;
+    float minStiffness;
+    float damping;
+    int32_t substeps;
+    float settleDuration;
+#ifdef __cplusplus
+    ImGenieWobblyParams() : cellsV(20), cellsH(20), maxStiffness(200.0f), minStiffness(50.0f), damping(10.0f), substeps(8), settleDuration(0.15f) {}
+#endif
+} ImGenieWobblyParams;
+
+typedef struct ImGenieTransitions {
+    ImGenieTransitionMode transitionMode;
+    ImGenieGenieParams genie;
+    ImGeniePageCurlParams pageCurl;
+#ifdef __cplusplus
+    ImGenieTransitions() : transitionMode(ImGenieTransitionMode_Genie), genie(), pageCurl() {}
+#endif
+} ImGenieTransitions;
+
+typedef struct ImGenieEffects {
+    ImGenieEffectMode effectMode;
+    ImGenieWobblyParams wobbly;
+#ifdef __cplusplus
+    ImGenieEffects() : effectMode(ImGenieEffectMode_Wobbly), wobbly() {}
+#endif
+} ImGenieEffects;
+
+typedef struct ImGenieSettings {
+    bool drawDebugMesh;
+    ImGenieTransitions transitions;
+    ImGenieEffects effects;
+#ifdef __cplusplus
+    ImGenieSettings() : drawDebugMesh(false), transitions(), effects() {}
+#endif
+} ImGenieSettings;
 
 #ifdef __cplusplus
 
@@ -77,108 +158,8 @@ typedef struct ImGenie_Rect {
 #include <imgui_internal.h>
 #endif  // IMGUI_INCLUDE
 
-/*
-Code sample for opengl
-
-==== Creation : ====
-
-IMGUI_CHECKVERSION();
-ImGui::CreateContext();
-ImGenie::CreateContext();
-ImGenie::SetCreateCaptureFunc([](int32_t aWidth, int32_t aHeight, ImDrawData* apDrawData) {
-    ImTextureRef ret{};
-
-    // Create texture for FBO color attachment
-    GLuint fboTex{};
-    glGenTextures(1, &fboTex);
-    glBindTexture(GL_TEXTURE_2D, fboTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, aWidth, aHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    // Create FBO and attach texture
-    GLuint fbo{};
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fboTex, 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glDeleteFramebuffers(1, &fbo);
-        glDeleteTextures(1, &fboTex);
-        return ret;
-    }
-
-    // Save GL state, render to FBO, restore
-    GLint prevViewport[4];
-    glGetIntegerv(GL_VIEWPORT, prevViewport);
-    glViewport(0, 0, aWidth, aHeight);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(apDrawData);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-
-    // Delete FBO but keep the texture (it contains the rendered snapshot)
-    glDeleteFramebuffers(1, &fbo);
-
-    ret._TexID = fboTex;
-    return ret;
-});
-ImGenie::SetCaptureFlipV(true);  // OpenGL Y-axis is inverted
-
-ImGenie::SetDestroyCaptureFunc([](const ImTextureRef& aTex) {
-    GLuint texID = static_cast<GLuint>(static_cast<uintptr_t>(aTex._TexID));
-    glDeleteTextures(1, &texID);
-});
-
-==== render loop : ====
-
-// Cpu Zone : prepare
-ImGui::Render();
-
-// Capture windows to FBO before main render
-ImGenie::Capture();
-
-// GPU Zone : Rendering
-glfwMakeContextCurrent(window);
-
-glViewport(0, 0, displayW, displayH);
-glClear(GL_COLOR_BUFFER_BIT);
-ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-Destruction :
-
-ImGenie::DestroyContext();
-ImGui::DestroyContext();
-*/
-
 typedef std::function<ImTextureRef(int32_t aWidth, int32_t aHeight, ImDrawData* apDrawData)> CreateCaptureFunctor;
 typedef std::function<void(const ImTextureRef&)> DestroyCaptureFunctor;
-
-// POD settings struct (ImGui-style, public members, C++ defaults)
-struct ImGenieSettings {
-    bool drawDebugMesh{false};
-    // Enable/disable effects
-    bool enableGenieEffect{true};   // Genie appear/disappear animation
-    bool enableWobblyMove{true};    // Wobbly window move (spring deformation)
-    // Genie effect (appear/disappear)
-    int32_t genieCellsV{20};
-    int32_t genieCellsH{1};
-    float genieAnimDuration{0.5f};
-    ImGenieSide genieSide{ImGenieSide_Auto};
-    ImGenieAnimMode animMode{ImGenieAnimMode_Compress};
-    // Wobbly move
-    int32_t wobblyCellsV{20};
-    int32_t wobblyCellsH{20};
-    float wobblyMaxStiffness{200.0f};
-    float wobblyMinStiffness{50.0f};
-    float wobblyDamping{10.0f};
-    int32_t wobblySubsteps{8};
-    float wobblySettleDuration{0.15f};
-};
 
 // POD effect struct (ImGui-style, public members)
 struct ImGenieEffect {
@@ -284,7 +265,6 @@ IMGENIE_API void End();
 #define IMGENIE_C_API extern "C" IMGENIE_API
 #else  // __cplusplus
 typedef struct ImGenieContext ImGenieContext;
-typedef struct ImGenieSettings ImGenieSettings;
 #define IMGENIE_C_API
 #endif  // __cplusplus
 
@@ -292,6 +272,14 @@ typedef struct ImGenieSettings ImGenieSettings;
 // The wrapper binding is responsible for casting to/from the correct types.
 typedef void* (*ImGenie_CreateCaptureFunc)(int32_t aWidth, int32_t aHeight, void* apDrawData);
 typedef void (*ImGenie_DestroyCaptureFunc)(void* apTex);
+
+// C-compatible rect struct
+typedef struct ImGenie_Rect {
+    float minX;
+    float minY;
+    float maxX;
+    float maxY;
+} ImGenie_Rect;
 
 IMGENIE_C_API const char* ImGenie_GetVersion(void);
 IMGENIE_C_API int ImGenie_GetVersionNum(void);

@@ -222,6 +222,156 @@ static void s_latticeDraw(ImDrawList* apDrawList,
     s_drawTexturedCoonsMeshPrimAnim(apDrawList, arTexture, arP00, arP10, arP01, arP11, aCellsH, aCellsV, 0.0f, 1.0f, aAnimMode, aDrawDebugMesh, false, false, aFlipV);
 }
 
+// Page curl / scroll-unroll effect.
+// A straight fold line sweeps diagonally from BL to TR.
+// Vertices in front of the fold: flat (normal position, visible).
+// Vertices past the fold: projected onto the fold line (rolled up).
+// This simulates a scroll/roll being unrolled across the window.
+//
+// aAnimT: 0 = fully rolled (everything on BL point), 1 = fully flat (visible).
+static void s_pageCurlAnimate(ImDrawList* apDrawList,
+                                const ImTextureRef& arTexture,
+                                const ImVec2& arCapturedSize,
+                                float aAnimT,
+                                const ImRect& arSource,
+                                int32_t aCellsH,
+                                int32_t aCellsV,
+                                bool aDrawDebugMesh,
+                                ImGeniePageCurlOrigin aOrigin = ImGeniePageCurlOrigin_BottomLeft,
+                                bool aFlipV = false) {
+    if (!apDrawList || arTexture._TexID == 0 || aAnimT <= 0.0f) {
+        return;
+    }
+    const auto winW = arSource.GetWidth();
+    const auto winH = arSource.GetHeight();
+    if (winW <= 0.0f || winH <= 0.0f) {
+        return;
+    }
+    // Smoothstep easing
+    const auto t = ImClamp(aAnimT, 0.0f, 1.0f);
+    const auto eased = t * t * (3.0f - 2.0f * t);
+
+    // Compute start corner and sweep direction based on origin
+    const auto diagLen = sqrtf(winW * winW + winH * winH);
+    ImVec2 startCorner;
+    ImVec2 sweepDir;
+    float sweepLen = diagLen;
+    switch (aOrigin) {
+        case ImGeniePageCurlOrigin_BottomLeft:
+            startCorner = ImVec2(arSource.Min.x, arSource.Max.y);
+            sweepDir = ImVec2(winW / diagLen, -winH / diagLen);
+            break;
+        case ImGeniePageCurlOrigin_BottomRight:
+            startCorner = ImVec2(arSource.Max.x, arSource.Max.y);
+            sweepDir = ImVec2(-winW / diagLen, -winH / diagLen);
+            break;
+        case ImGeniePageCurlOrigin_TopLeft:
+            startCorner = ImVec2(arSource.Min.x, arSource.Min.y);
+            sweepDir = ImVec2(winW / diagLen, winH / diagLen);
+            break;
+        case ImGeniePageCurlOrigin_TopRight:
+            startCorner = ImVec2(arSource.Max.x, arSource.Min.y);
+            sweepDir = ImVec2(-winW / diagLen, winH / diagLen);
+            break;
+        case ImGeniePageCurlOrigin_Bottom:
+            startCorner = ImVec2(arSource.Min.x, arSource.Max.y);
+            sweepDir = ImVec2(0.0f, -1.0f);
+            sweepLen = winH;
+            break;
+        case ImGeniePageCurlOrigin_Top:
+            startCorner = ImVec2(arSource.Min.x, arSource.Min.y);
+            sweepDir = ImVec2(0.0f, 1.0f);
+            sweepLen = winH;
+            break;
+        case ImGeniePageCurlOrigin_Left:
+            startCorner = ImVec2(arSource.Min.x, arSource.Min.y);
+            sweepDir = ImVec2(1.0f, 0.0f);
+            sweepLen = winW;
+            break;
+        case ImGeniePageCurlOrigin_Right:
+            startCorner = ImVec2(arSource.Max.x, arSource.Min.y);
+            sweepDir = ImVec2(-1.0f, 0.0f);
+            sweepLen = winW;
+            break;
+        default:
+            startCorner = ImVec2(arSource.Min.x, arSource.Max.y);
+            sweepDir = ImVec2(winW / diagLen, -winH / diagLen);
+            break;
+    }
+
+    // Fold line position along the sweep
+    const auto foldDist = eased * sweepLen;
+
+    // --- Mesh ---
+    const auto tint = IM_COL32(255, 255, 255, 255);
+    const auto vertsPerRow = static_cast<uint32_t>(aCellsH + 1);
+    const auto vertsPerCol = static_cast<uint32_t>(aCellsV + 1);
+    const auto vertexCount = vertsPerRow * vertsPerCol;
+    const auto indexCount = static_cast<uint32_t>(aCellsH) * static_cast<uint32_t>(aCellsV) * 6U;
+    apDrawList->PushTexture(arTexture);
+    apDrawList->PrimReserve(indexCount, vertexCount);
+    auto currRowStart = static_cast<ImDrawIdx>(apDrawList->_VtxCurrentIdx);
+    ImDrawIdx prevRowStart = 0;
+
+    // Fold line point
+    const ImVec2 foldPt(startCorner.x + foldDist * sweepDir.x,
+                        startCorner.y + foldDist * sweepDir.y);
+
+    for (uint32_t rowIdx = 0; rowIdx < vertsPerCol; ++rowIdx) {
+        const auto vf = (vertsPerCol > 1) ? (static_cast<float>(rowIdx) / static_cast<float>(vertsPerCol - 1)) : 0.0f;
+        for (uint32_t colIdx = 0; colIdx < vertsPerRow; ++colIdx) {
+            const auto uf = (vertsPerRow > 1) ? (static_cast<float>(colIdx) / static_cast<float>(vertsPerRow - 1)) : 0.0f;
+
+            // Original screen position
+            const auto sx = arSource.Min.x + uf * winW;
+            const auto sy = arSource.Min.y + vf * winH;
+
+            // Signed distance from fold point along sweep direction
+            const auto dx = sx - foldPt.x;
+            const auto dy = sy - foldPt.y;
+            const auto sweepDist = dx * sweepDir.x + dy * sweepDir.y;
+
+            const auto uvX = uf;
+            const auto uvY = aFlipV ? (1.0f - vf) : vf;
+
+            if (sweepDist <= 0.0f) {
+                // In front of fold: flat, normal position
+                apDrawList->PrimWriteVtx(ImVec2(sx, sy), ImVec2(uvX, uvY), tint);
+            } else {
+                // Past fold: project onto the fold line (rolled up)
+                // Remove the sweep component, keep perpendicular component
+                auto projX = sx - sweepDist * sweepDir.x;
+                auto projY = sy - sweepDist * sweepDir.y;
+                // Clamp to window bounds so the fold line doesn't exceed the rect
+                projX = ImClamp(projX, arSource.Min.x, arSource.Max.x);
+                projY = ImClamp(projY, arSource.Min.y, arSource.Max.y);
+                apDrawList->PrimWriteVtx(ImVec2(projX, projY), ImVec2(uvX, uvY), tint);
+            }
+        }
+        if (rowIdx > 0) {
+            for (int32_t colIdx = 0; colIdx < aCellsH; ++colIdx) {
+                const auto tl = prevRowStart + static_cast<ImDrawIdx>(colIdx);
+                const auto tr = tl + 1;
+                const auto bl = currRowStart + static_cast<ImDrawIdx>(colIdx);
+                const auto br = bl + 1;
+                apDrawList->PrimWriteIdx(tl);
+                apDrawList->PrimWriteIdx(tr);
+                apDrawList->PrimWriteIdx(br);
+                apDrawList->PrimWriteIdx(tl);
+                apDrawList->PrimWriteIdx(br);
+                apDrawList->PrimWriteIdx(bl);
+            }
+        }
+        prevRowStart = currRowStart;
+        currRowStart = static_cast<ImDrawIdx>(currRowStart + vertsPerRow);
+    }
+    apDrawList->PopTexture();
+    if (aDrawDebugMesh && !apDrawList->CmdBuffer.empty()) {
+        auto* pCmd = &apDrawList->CmdBuffer.front();
+        ImGui::DebugNodeDrawCmdShowMeshAndBoundingBox(apDrawList, apDrawList, pCmd, true, true);
+    }
+}
+
 // Auto-detect which side of the button the window is on.
 // Compares center positions: the dominant axis (x or y) determines the side.
 static ImGenieSide s_autoDetectSide(const ImRect& arSource, const ImRect& arTarget) {
@@ -463,12 +613,12 @@ static void s_updateSprings(ImGenieEffect& aorEffect, const ImRect& arWinRect, f
     const auto& rSettings = aorEffect.settings;
     ImVec2 targets[4];
     s_cornersFromRect(arWinRect, targets);
-    const auto subDt = aDt / rSettings.wobblySubsteps;
-    for (int32_t step = 0; step < rSettings.wobblySubsteps; ++step) {
+    const auto subDt = aDt / rSettings.effects.wobbly.substeps;
+    for (int32_t step = 0; step < rSettings.effects.wobbly.substeps; ++step) {
         for (int32_t i = 0; i < 4; ++i) {
-            const auto stiffness = rSettings.wobblyMinStiffness + (rSettings.wobblyMaxStiffness - rSettings.wobblyMinStiffness) * aorEffect.springWeights[i];
+            const auto stiffness = rSettings.effects.wobbly.minStiffness + (rSettings.effects.wobbly.maxStiffness - rSettings.effects.wobbly.minStiffness) * aorEffect.springWeights[i];
             auto force = (targets[i] - aorEffect.springs[i].current) * stiffness;
-            force = force - aorEffect.springs[i].velocity * rSettings.wobblyDamping;
+            force = force - aorEffect.springs[i].velocity * rSettings.effects.wobbly.damping;
             aorEffect.springs[i].velocity = aorEffect.springs[i].velocity + force * subDt;
             aorEffect.springs[i].current = aorEffect.springs[i].current + aorEffect.springs[i].velocity * subDt;
         }
@@ -596,7 +746,8 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
         // --- Disappearance: animating ---
         if (effect.state == ImGenieEffect::State::Animating) {
             const auto dt = ImGui::GetIO().DeltaTime;
-            effect.animT += dt / effect.settings.genieAnimDuration;
+            const auto isPageCurl = (effect.settings.transitions.transitionMode == ImGenieTransitionMode_PageCurl);
+            effect.animT += dt / (isPageCurl ? effect.settings.transitions.pageCurl.animDuration : effect.settings.transitions.genie.animDuration);
             if (effect.animT >= 1.0f) {
                 s_deleteEffectTexture(effect);
                 ctx.effectNames.erase(id);
@@ -605,22 +756,36 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
                 return true;
             }
             auto* pDrawList = ImGui::GetForegroundDrawList();
-            // For Left/Right, swap cellsH and cellsV so subdivisions follow the correct axis
-            const auto horizontal = (effect.resolvedSide == ImGenieSide_Left || effect.resolvedSide == ImGenieSide_Right);
-            const auto cellsH = horizontal ? effect.settings.genieCellsV : effect.settings.genieCellsH;
-            const auto cellsV = horizontal ? effect.settings.genieCellsH : effect.settings.genieCellsV;
-            s_latticeAnimate(pDrawList,
-                             effect.capturedTex,
-                             effect.capturedSize,
-                             effect.animT,
-                             effect.sourceRect,
-                             effect.destRect,
-                             cellsH,
-                             cellsV,
-                             effect.settings.animMode,
-                             effect.settings.drawDebugMesh,
-                             effect.resolvedSide,
-                             ctx.captureFlipV);
+            if (isPageCurl) {
+                // Page unroll disappearance: fold from right to left (reverse animT)
+                s_pageCurlAnimate(pDrawList,
+                                    effect.capturedTex,
+                                    effect.capturedSize,
+                                    1.0f - effect.animT,
+                                    effect.sourceRect,
+                                    effect.settings.transitions.pageCurl.cellsH,
+                                    effect.settings.transitions.pageCurl.cellsV,
+                                    effect.settings.drawDebugMesh,
+                                    effect.settings.transitions.pageCurl.origin,
+                                    ctx.captureFlipV);
+            } else {
+                // For Left/Right, swap cellsH and cellsV so subdivisions follow the correct axis
+                const auto horizontal = (effect.resolvedSide == ImGenieSide_Left || effect.resolvedSide == ImGenieSide_Right);
+                const auto cellsH = horizontal ? effect.settings.transitions.genie.cellsV : effect.settings.transitions.genie.cellsH;
+                const auto cellsV = horizontal ? effect.settings.transitions.genie.cellsH : effect.settings.transitions.genie.cellsV;
+                s_latticeAnimate(pDrawList,
+                                 effect.capturedTex,
+                                 effect.capturedSize,
+                                 effect.animT,
+                                 effect.sourceRect,
+                                 effect.destRect,
+                                 cellsH,
+                                 cellsV,
+                                 effect.settings.transitions.genie.animMode,
+                                 effect.settings.drawDebugMesh,
+                                 effect.resolvedSide,
+                                 ctx.captureFlipV);
+            }
             *apoOpen = false;
             return false;
         }
@@ -635,7 +800,8 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
         // --- Appearance: animating ---
         if (effect.state == ImGenieEffect::State::AppearingAnimating) {
             const auto dt = ImGui::GetIO().DeltaTime;
-            effect.animT += dt / effect.settings.genieAnimDuration;
+            const auto isPageCurl = (effect.settings.transitions.transitionMode == ImGenieTransitionMode_PageCurl);
+            effect.animT += dt / (isPageCurl ? effect.settings.transitions.pageCurl.animDuration : effect.settings.transitions.genie.animDuration);
             if (effect.animT >= 1.0f) {
                 s_deleteEffectTexture(effect);
                 ctx.effectNames.erase(id);
@@ -645,22 +811,36 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
                 return true;
             }
             auto* pDrawList = ImGui::GetForegroundDrawList();
-            const auto horizontal = (effect.resolvedSide == ImGenieSide_Left || effect.resolvedSide == ImGenieSide_Right);
-            const auto cellsH = horizontal ? effect.settings.genieCellsV : effect.settings.genieCellsH;
-            const auto cellsV = horizontal ? effect.settings.genieCellsH : effect.settings.genieCellsV;
-            // Reverse: 1.0 - animT makes it expand from button to full window
-            s_latticeAnimate(pDrawList,
-                             effect.capturedTex,
-                             effect.capturedSize,
-                             1.0f - effect.animT,
-                             effect.sourceRect,
-                             effect.destRect,
-                             cellsH,
-                             cellsV,
-                             effect.settings.animMode,
-                             effect.settings.drawDebugMesh,
-                             effect.resolvedSide,
-                             ctx.captureFlipV);
+            if (isPageCurl) {
+                // Page unroll appearance: unroll from left to right
+                s_pageCurlAnimate(pDrawList,
+                                    effect.capturedTex,
+                                    effect.capturedSize,
+                                    effect.animT,
+                                    effect.sourceRect,
+                                    effect.settings.transitions.pageCurl.cellsH,
+                                    effect.settings.transitions.pageCurl.cellsV,
+                                    effect.settings.drawDebugMesh,
+                                    effect.settings.transitions.pageCurl.origin,
+                                    ctx.captureFlipV);
+            } else {
+                const auto horizontal = (effect.resolvedSide == ImGenieSide_Left || effect.resolvedSide == ImGenieSide_Right);
+                const auto cellsH = horizontal ? effect.settings.transitions.genie.cellsV : effect.settings.transitions.genie.cellsH;
+                const auto cellsV = horizontal ? effect.settings.transitions.genie.cellsH : effect.settings.transitions.genie.cellsV;
+                // Reverse: 1.0 - animT makes it expand from button to full window
+                s_latticeAnimate(pDrawList,
+                                 effect.capturedTex,
+                                 effect.capturedSize,
+                                 1.0f - effect.animT,
+                                 effect.sourceRect,
+                                 effect.destRect,
+                                 cellsH,
+                                 cellsV,
+                                 effect.settings.transitions.genie.animMode,
+                                 effect.settings.drawDebugMesh,
+                                 effect.resolvedSide,
+                                 ctx.captureFlipV);
+            }
             *apoOpen = false;
             return false;
         }
@@ -740,7 +920,7 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
                 }
             } else {
                 // Settle phase: EaseOutQuad lerp from deformed positions back to real corners
-                effect.animT += dt / effect.settings.wobblySettleDuration;
+                effect.animT += dt / effect.settings.effects.wobbly.settleDuration;
                 if (effect.animT >= 1.0f) {
                     s_deleteEffectTexture(effect);
                     ctx.effectNames.erase(id);
@@ -762,9 +942,9 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
                           effect.springs[1].current,
                           effect.springs[2].current,
                           effect.springs[3].current,
-                          effect.settings.wobblyCellsH,
-                          effect.settings.wobblyCellsV,
-                          effect.settings.animMode,
+                          effect.settings.effects.wobbly.cellsH,
+                          effect.settings.effects.wobbly.cellsV,
+                          effect.settings.transitions.genie.animMode,
                           effect.settings.drawDebugMesh,
                           ctx.captureFlipV);
             return true;
@@ -784,8 +964,8 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
 
     // --- Detect disappearance: window was open, now closed ---
     if (wasOpen && !(*apoOpen)) {
-        if (!settings.enableGenieEffect) {
-            return true;  // Genie disabled: let window close instantly
+        if (settings.transitions.transitionMode == ImGenieTransitionMode_None) {
+            return true;  // No effect enabled: let window close instantly
         }
         auto* pWin = ImGui::FindWindowByName(aWindowName);
         if (pWin != nullptr) {
@@ -796,9 +976,9 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
             effect.capturedSize = effect.sourceRect.GetSize();
             effect.settings = settings;
             // Resolve genie side once (won't change during animation even if button moves)
-            effect.resolvedSide = (settings.genieSide == ImGenieSide_Auto)  //
+            effect.resolvedSide = (settings.transitions.genie.side == ImGenieSide_Auto)  //
                 ? s_autoDetectSide(effect.sourceRect, effect.destRect)
-                : settings.genieSide;
+                : settings.transitions.genie.side;
             ctx.effects[id] = effect;
             ctx.effectNames[id] = aWindowName;
             // Keep window open one more frame for capture
@@ -809,8 +989,8 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
 
     // --- Detect appearance: window was closed, now open ---
     if (!wasOpen && *apoOpen) {
-        if (!settings.enableGenieEffect) {
-            return true;  // Genie disabled: let window appear instantly
+        if (settings.transitions.transitionMode == ImGenieTransitionMode_None) {
+            return true;  // No effect enabled: let window appear instantly
         }
         ImGenieEffect effect;
         effect.state = ImGenieEffect::State::AppearingCapture;
@@ -830,7 +1010,7 @@ bool ImGenie::Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoO
     // Frame 1: MovingWindow matches this window → record initial position in dragStartPos.
     // Frame 2: if pWin->Pos has changed since recorded position → real drag confirmed.
     // This two-frame delay avoids triggering on a simple click (no movement).
-    if (*apoOpen && settings.enableWobblyMove) {
+    if (*apoOpen && settings.effects.effectMode == ImGenieEffectMode_Wobbly) {
         const auto& g = *GImGui;
         auto* pWin = ImGui::FindWindowByName(aWindowName);
         if (pWin != nullptr && g.MovingWindow != nullptr) {
@@ -923,7 +1103,7 @@ void ImGenie::Capture() {
             effect.sourceRect = pWin->Rect();
             effect.capturedSize = pWin->Size;
             // Resolve genie side here (not in ByPass) because pWin->Rect() is only valid now
-            effect.resolvedSide = (effect.settings.genieSide == ImGenieSide_Auto) ? s_autoDetectSide(effect.sourceRect, effect.destRect) : effect.settings.genieSide;
+            effect.resolvedSide = (effect.settings.transitions.genie.side == ImGenieSide_Auto) ? s_autoDetectSide(effect.sourceRect, effect.destRect) : effect.settings.transitions.genie.side;
             // Render the window's DrawList into an offscreen FBO → texture
             effect.capturedTex = s_captureWindow(pWin, pMainDrawData);
             if (effect.capturedTex._TexID != 0) {
@@ -1029,33 +1209,48 @@ void ImGenie::ShowDemoWindow(bool* apoOpen, ImGenieSettings* apoSettings, ImGeni
     }
     ImGui::SameLine();
     ImGui::Checkbox("Draw Debug Mesh", &pSettings->drawDebugMesh);
-    if (ImGui::CollapsingHeader("Genie Effect")) {
-        ImGui::Checkbox("Enable Genie Effect", &pSettings->enableGenieEffect);
-        ImGui::Separator();
-        ImGui::Text("Genie Effect (Appear/Disappear)");
-        auto sideIdx = static_cast<int>(pSettings->genieSide);
-        if (ImGui::Combo("Genie Side", &sideIdx, "Auto\0Top\0Bottom\0Left\0Right\0\0")) {
-            pSettings->genieSide = static_cast<ImGenieSide>(sideIdx);
+    if (ImGui::CollapsingHeader("Transitions", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto transitionModeIdx = static_cast<int>(pSettings->transitions.transitionMode);
+        if (ImGui::Combo("Transition Mode", &transitionModeIdx, "None\0Genie\0Page Curl\0\0")) {
+            pSettings->transitions.transitionMode = static_cast<ImGenieTransitionMode>(transitionModeIdx);
         }
-        ImGui::SliderInt("Genie Cells V", &pSettings->genieCellsV, 1, 100);
-        ImGui::SliderInt("Genie Cells H", &pSettings->genieCellsH, 1, 100);
-        ImGui::SliderFloat("Genie Anim Duration", &pSettings->genieAnimDuration, 0.05f, 3.0f, "%.2f s");
-        auto animModeIdx = static_cast<int>(pSettings->animMode);
-        if (ImGui::Combo("Anim mode", &animModeIdx, "Compress\0Sliding\0\0")) {
-            pSettings->animMode = static_cast<ImGenieAnimMode>(animModeIdx);
+        if (pSettings->transitions.transitionMode == ImGenieTransitionMode_Genie) {
+            auto sideIdx = static_cast<int>(pSettings->transitions.genie.side);
+            if (ImGui::Combo("Genie Side", &sideIdx, "Auto\0Top\0Bottom\0Left\0Right\0\0")) {
+                pSettings->transitions.genie.side = static_cast<ImGenieSide>(sideIdx);
+            }
+            ImGui::SliderInt("Genie Cells V", &pSettings->transitions.genie.cellsV, 1, 100);
+            ImGui::SliderInt("Genie Cells H", &pSettings->transitions.genie.cellsH, 1, 100);
+            ImGui::SliderFloat("Genie Anim Duration", &pSettings->transitions.genie.animDuration, 0.05f, 3.0f, "%.2f s");
+            auto animModeIdx = static_cast<int>(pSettings->transitions.genie.animMode);
+            if (ImGui::Combo("Anim mode", &animModeIdx, "Compress\0Sliding\0\0")) {
+                pSettings->transitions.genie.animMode = static_cast<ImGenieAnimMode>(animModeIdx);
+            }
+        }
+        if (pSettings->transitions.transitionMode == ImGenieTransitionMode_PageCurl) {
+            auto originIdx = static_cast<int>(pSettings->transitions.pageCurl.origin);
+            if (ImGui::Combo("Origin", &originIdx, "Top Left\0Top\0Top Right\0Right\0Bottom Right\0Bottom\0Bottom Left\0Left\0\0")) {
+                pSettings->transitions.pageCurl.origin = static_cast<ImGeniePageCurlOrigin>(originIdx);
+            }
+            ImGui::SliderInt("Page Cells H", &pSettings->transitions.pageCurl.cellsH, 1, 100);
+            ImGui::SliderInt("Page Cells V", &pSettings->transitions.pageCurl.cellsV, 1, 100);
+            ImGui::SliderFloat("Page Anim Duration", &pSettings->transitions.pageCurl.animDuration, 0.05f, 3.0f, "%.2f s");
         }
     }
-    if (ImGui::CollapsingHeader("Wobbly Move")) {
-        ImGui::Checkbox("Enable Wobbly Move", &pSettings->enableWobblyMove);
-        ImGui::Separator();
-        ImGui::Text("Wobbly Move");
-        ImGui::SliderInt("Wobbly Cells V", &pSettings->wobblyCellsV, 1, 100);
-        ImGui::SliderInt("Wobbly Cells H", &pSettings->wobblyCellsH, 1, 100);
-        ImGui::SliderFloat("Wobbly Max Stiffness", &pSettings->wobblyMaxStiffness, 10.0f, 5000.0f, "%.0f");
-        ImGui::SliderFloat("Wobbly Min Stiffness", &pSettings->wobblyMinStiffness, 1.0f, 1000.0f, "%.0f");
-        ImGui::SliderFloat("Wobbly Damping", &pSettings->wobblyDamping, 0.1f, 100.0f, "%.1f");
-        ImGui::SliderInt("Wobbly Substeps", &pSettings->wobblySubsteps, 1, 32);
-        ImGui::SliderFloat("Wobbly Settle Duration", &pSettings->wobblySettleDuration, 0.01f, 1.0f, "%.2f s");
+    if (ImGui::CollapsingHeader("Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto effectModeIdx = static_cast<int>(pSettings->effects.effectMode);
+        if (ImGui::Combo("Effect Mode", &effectModeIdx, "None\0Wobbly\0\0")) {
+            pSettings->effects.effectMode = static_cast<ImGenieEffectMode>(effectModeIdx);
+        }
+        if (pSettings->effects.effectMode == ImGenieEffectMode_Wobbly) {
+            ImGui::SliderInt("Wobbly Cells V", &pSettings->effects.wobbly.cellsV, 1, 100);
+            ImGui::SliderInt("Wobbly Cells H", &pSettings->effects.wobbly.cellsH, 1, 100);
+            ImGui::SliderFloat("Wobbly Max Stiffness", &pSettings->effects.wobbly.maxStiffness, 10.0f, 5000.0f, "%.0f");
+            ImGui::SliderFloat("Wobbly Min Stiffness", &pSettings->effects.wobbly.minStiffness, 1.0f, 1000.0f, "%.0f");
+            ImGui::SliderFloat("Wobbly Damping", &pSettings->effects.wobbly.damping, 0.1f, 100.0f, "%.1f");
+            ImGui::SliderInt("Wobbly Substeps", &pSettings->effects.wobbly.substeps, 1, 32);
+            ImGui::SliderFloat("Wobbly Settle Duration", &pSettings->effects.wobbly.settleDuration, 0.01f, 1.0f, "%.2f s");
+        }
     }
     if (ImGui::CollapsingHeader("Active effects", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Active effects: %d", static_cast<int>(ctx.effects.size()));
@@ -1097,9 +1292,9 @@ void ImGenie::ShowDemoWindow(bool* apoOpen, ImGenieSettings* apoSettings, ImGeni
                     ImGui::Text("AnimT: %.3f", effect.animT);
                     const auto isGenie = (effect.state == ImGenieEffect::State::Animating || effect.state == ImGenieEffect::State::AppearingAnimating);
                     if (isGenie) {
-                        ImGui::Text("Cells: %d x %d", effect.settings.genieCellsH, effect.settings.genieCellsV);
+                        ImGui::Text("Cells: %d x %d", effect.settings.transitions.genie.cellsH, effect.settings.transitions.genie.cellsV);
                     } else {
-                        ImGui::Text("Cells: %d x %d", effect.settings.wobblyCellsH, effect.settings.wobblyCellsV);
+                        ImGui::Text("Cells: %d x %d", effect.settings.effects.wobbly.cellsH, effect.settings.effects.wobbly.cellsV);
                     }
                     if (effect.state == ImGenieEffect::State::MovingActive || effect.state == ImGenieEffect::State::MovingSettle) {
                         for (int32_t i = 0; i < 4; ++i) {
