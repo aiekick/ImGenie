@@ -13,7 +13,7 @@ macOS-style Genie effect, Page Curl transition and Wobbly windows for [Dear ImGu
   - [Simple usage (Begin/End)](#simple-usage-beginend)
   - [Advanced usage (Allow)](#advanced-usage-allow)
 - [Settings](#settings)
-  - [ImGenieSettings](#imgeniesettings)
+  - [ImGenieParams](#imgeniesettings)
   - [Transitions](#transitions)
   - [Effects](#effects)
 - [Enums](#enums)
@@ -89,11 +89,14 @@ ImGui::DestroyContext();
 **Important**: unlike `ImGui::Begin`/`End`, you must only call `ImGenie::End()` when `ImGenie::Begin()` returned `true`.
 
 ```cpp
-// buttonRect = the rect the window animates to/from (e.g. a dock icon)
-ImRect buttonRect(buttonPos, buttonPos + buttonSize);
+// For genie transition: set the target rect the window animates to/from
+ImGenieParams params;  // or use global params via context
+params.transitions.genie.destRect = {buttonPos.x, buttonPos.y,
+                                     buttonPos.x + buttonSize.x,
+                                     buttonPos.y + buttonSize.y};
 
 // show is a bool controlling the window visibility
-if (ImGenie::Begin("My Window", buttonRect, &show)) {
+if (ImGenie::Begin("My Window", &show, ImGuiWindowFlags_None, &params)) {
     ImGui::Text("Hello!");
     ImGenie::End();
 }
@@ -106,11 +109,14 @@ if (ImGenie::Begin("My Window", buttonRect, &show)) {
 Call `Allow` **every frame**, **unconditionally**, **before** your `if (show)` guard.
 
 ```cpp
-ImRect buttonRect(buttonPos, buttonPos + buttonSize);
+ImGenieParams params;
+params.transitions.genie.destRect = {buttonPos.x, buttonPos.y,
+                                     buttonPos.x + buttonSize.x,
+                                     buttonPos.y + buttonSize.y};
 
 // Allow returns true when you should show your window normally.
 // Returns false when ImGenie is handling the animation.
-if (ImGenie::Allow("My Window", buttonRect, &show)) {
+if (ImGenie::Allow("My Window", &show, &params)) {
     if (show) {
         ImGui::Begin("My Window", &show);
         ImGui::Text("Hello!");
@@ -123,7 +129,7 @@ if (ImGenie::Allow("My Window", buttonRect, &show)) {
 
 Settings can be passed per-window via the `apSettings` parameter of `Allow` / `Begin`, or set globally via `ImGenie::GetCurrentContext()->globalSettings`.
 
-### ImGenieSettings
+### ImGenieParams
 
 | Field | Type | Description |
 |---|---|---|
@@ -150,6 +156,7 @@ Controlled by `settings.transitions.transitionMode`:
 | `animDuration` | `float` | 0.5s | Animation duration in seconds |
 | `side` | `ImGenieSide` | Auto | Side the window collapses toward |
 | `animMode` | `ImGenieAnimMode` | Compress | UV mapping mode (Compress or Sliding) |
+| `destRect` | `ImGenie_Rect` | {0,0,0,0} | Target rect the window animates to/from (update every frame) |
 
 #### Page Curl parameters (`settings.transitions.pageCurl`)
 
@@ -223,13 +230,13 @@ Origin corner or edge for the Page Curl transition.
 
 All functions are available as C-compatible functions prefixed with `ImGenie_`. Settings structs are fully accessible in C.
 
-Use `ImGenie_DefaultSettings()` to get a pointer to a properly initialized `ImGenieSettings` instance.
+Use `ImGenie_DefaultParams()` to get a pointer to a properly initialized `ImGenieParams` instance.
 
 ```c
 ImGenieContext* ctx = ImGenie_CreateContext();
-ImGenieSettings* settings = ImGenie_DefaultSettings();
-settings->transitions.transitionMode = ImGenieTransitionMode_PageCurl;
-settings->transitions.pageCurl.origin = ImGeniePageCurlOrigin_TopRight;
+ImGenieParams* params = ImGenie_DefaultParams();
+params->transitions.transitionMode = ImGenieTransitionMode_PageCurl;
+params->transitions.pageCurl.origin = ImGeniePageCurlOrigin_TopRight;
 ```
 
 | C++ | C |

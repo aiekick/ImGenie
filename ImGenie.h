@@ -30,7 +30,7 @@ SOFTWARE.
 // ImGenie
 // macOS-style Genie effect and Wobbly windows for Dear ImGui
 
-// See Documentation.md for usage, integration examples (OpenGL, Vulkan), settings reference and C API.
+// See Documentation.md for usage, integration examples (OpenGL, Vulkan), params reference and C API.
 
 #ifndef IMGENIE_API
 #define IMGENIE_API
@@ -81,16 +81,25 @@ enum ImGenieEffectMode_ {
     ImGenieEffectMode_Wobbly,
 };
 
-// Settings structs — C and C++ compatible
-// In C, use ImGenie_DefaultSettings() to get a properly initialized instance.
+// C-compatible rect struct
+typedef struct ImGenie_Rect {
+    float minX;
+    float minY;
+    float maxX;
+    float maxY;
+} ImGenie_Rect;
+
+// Params structs — C and C++ compatible
+// In C, use ImGenie_DefaultParams() to get a properly initialized instance.
 typedef struct ImGenieGenieParams {
     int32_t cellsV;
     int32_t cellsH;
     float animDuration;
     ImGenieSide side;
     ImGenieAnimMode animMode;
+    ImGenie_Rect destRect;  // Target rect the window animates to/from (update every frame)
 #ifdef __cplusplus
-    ImGenieGenieParams() : cellsV(20), cellsH(1), animDuration(0.5f), side(ImGenieSide_Auto), animMode(ImGenieAnimMode_Compress) {}
+    ImGenieGenieParams() : cellsV(20), cellsH(1), animDuration(0.5f), side(ImGenieSide_Auto), animMode(ImGenieAnimMode_Compress), destRect{} {}
 #endif
 } ImGenieGenieParams;
 
@@ -134,14 +143,14 @@ typedef struct ImGenieEffects {
 #endif
 } ImGenieEffects;
 
-typedef struct ImGenieSettings {
+typedef struct ImGenieParams {
     bool drawDebugMesh;
     ImGenieTransitions transitions;
     ImGenieEffects effects;
 #ifdef __cplusplus
-    ImGenieSettings() : drawDebugMesh(false), transitions(), effects() {}
+    ImGenieParams() : drawDebugMesh(false), transitions(), effects() {}
 #endif
-} ImGenieSettings;
+} ImGenieParams;
 
 #ifdef __cplusplus
 
@@ -189,14 +198,14 @@ struct ImGenieEffect {
     ImVec2 settleStart[4]{};
     // Resolved side (computed once at effect creation, never changes)
     ImGenieSide resolvedSide{ImGenieSide_Top};
-    // Per-effect settings snapshot
-    ImGenieSettings settings{};
+    // Per-effect params snapshot
+    ImGenieParams params{};
 };
 
 // POD context struct (ImGui-style, public members)
 struct ImGenieContext {
-    ImGenieSettings defaultSettings{};
-    ImGenieSettings globalSettings{};
+    ImGenieParams defaultParams{};
+    ImGenieParams globalParams{};
     std::unordered_map<ImGuiID, ImGenieEffect> effects{};
     std::unordered_map<ImGuiID, bool> openStates{};
     std::unordered_map<ImGuiID, const char*> effectNames{};
@@ -207,13 +216,13 @@ struct ImGenieContext {
 };
 
 // Check that version and struct sizes match between compiled ImGenie code and caller.
-#define IMGENIE_CHECKVERSION() ImGenie::DebugCheckVersion(IMGENIE_VERSION, sizeof(ImGenieSettings), sizeof(ImGenieEffect), sizeof(ImGenieContext))
+#define IMGENIE_CHECKVERSION() ImGenie::DebugCheckVersion(IMGENIE_VERSION, sizeof(ImGenieParams), sizeof(ImGenieEffect), sizeof(ImGenieContext))
 
 // ImGenie API
 namespace ImGenie {
 
 // Version check
-IMGENIE_API bool DebugCheckVersion(const char* aVersion, size_t aSettingsSize, size_t aEffectSize, size_t aContextSize);
+IMGENIE_API bool DebugCheckVersion(const char* aVersion, size_t aParamsSize, size_t aEffectSize, size_t aContextSize);
 
 // Contexts functions
 IMGENIE_API ImGenieContext* CreateContext();
@@ -235,22 +244,22 @@ IMGENIE_API bool HasActiveEffects();
 IMGENIE_API bool IsEffectActive(const char* aWindowName);
 
 // Show the demo window
-IMGENIE_API void ShowDemoWindow(bool* apoOpen = nullptr, ImGenieSettings* apoSettings = nullptr, ImGenieSettings* apoDefaultSettings = nullptr);
+IMGENIE_API void ShowDemoWindow(bool* apoOpen = nullptr, ImGenieParams* apoParams = nullptr, ImGenieParams* apoDefaultParams = nullptr);
 
 // to Call every frame UNCONDITIONALLY, BEFORE the if(show) guard.
 // Return true if you can show your window normally.
 // Return false if ImGenie is handling the window (animating).
-IMGENIE_API bool Allow(const char* aWindowName, const ImRect& arDstRect, bool* apoOpen, const ImGenieSettings* apSettings = nullptr);
+IMGENIE_API bool Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams* apParams = nullptr);
 
 // Wrapper combining Allow + ImGui::Begin/End for simpler usage.
 // IMPORTANT: Unlike ImGui::Begin/End, End() must only be called if Begin() returned true.
 // Calling End() when Begin() returned false will trigger an ImGui assert.
 // Usage:
-//   if (ImGenie::Begin("Window", buttonRect, &show)) {
+//   if (ImGenie::Begin("Window", &show)) {
 //       /* content */
 //       ImGenie::End();
 //   }
-IMGENIE_API bool Begin(const char* aWindowName, const ImRect& arDstRect, bool* apoOpen = NULL, ImGuiWindowFlags flags = 0, const ImGenieSettings* apSettings = nullptr);
+IMGENIE_API bool Begin(const char* aWindowName, bool* apoOpen = NULL, ImGuiWindowFlags flags = 0, const ImGenieParams* apParams = nullptr);
 IMGENIE_API void End();
 
 }  // namespace ImGenie
@@ -273,17 +282,10 @@ typedef struct ImGenieContext ImGenieContext;
 typedef void* (*ImGenie_CreateCaptureFunc)(int32_t aWidth, int32_t aHeight, void* apDrawData);
 typedef void (*ImGenie_DestroyCaptureFunc)(void* apTex);
 
-// C-compatible rect struct
-typedef struct ImGenie_Rect {
-    float minX;
-    float minY;
-    float maxX;
-    float maxY;
-} ImGenie_Rect;
 
 IMGENIE_C_API const char* ImGenie_GetVersion(void);
 IMGENIE_C_API int ImGenie_GetVersionNum(void);
-IMGENIE_C_API bool ImGenie_DebugCheckVersion(const char* aVersion, size_t aSettingsSize, size_t aEffectSize, size_t aContextSize);
+IMGENIE_C_API bool ImGenie_DebugCheckVersion(const char* aVersion, size_t aParamsSize, size_t aEffectSize, size_t aContextSize);
 IMGENIE_C_API ImGenieContext* ImGenie_CreateContext(void);
 IMGENIE_C_API void ImGenie_DestroyContext(ImGenieContext* apCtx);
 IMGENIE_C_API ImGenieContext* ImGenie_GetCurrentContext(void);
@@ -294,8 +296,8 @@ IMGENIE_C_API void ImGenie_SetCaptureFlipV(bool aFlipV);
 IMGENIE_C_API void ImGenie_Capture(void);
 IMGENIE_C_API bool ImGenie_HasActiveEffects(void);
 IMGENIE_C_API bool ImGenie_IsEffectActive(const char* aWindowName);
-IMGENIE_C_API ImGenieSettings* ImGenie_DefaultSettings(void);
-IMGENIE_C_API void ImGenie_ShowDemoWindow(bool* apoOpen, ImGenieSettings* apoSettings, ImGenieSettings* apoDefaultSettings);
-IMGENIE_C_API bool ImGenie_Allow(const char* aWindowName, const ImGenie_Rect* apDstRect, bool* apoOpen, const ImGenieSettings* apSettings);
-IMGENIE_C_API bool ImGenie_Begin(const char* aWindowName, const ImGenie_Rect* apDstRect, bool* apoOpen, int aFlags, const ImGenieSettings* apSettings);
+IMGENIE_C_API ImGenieParams* ImGenie_DefaultParams(void);
+IMGENIE_C_API void ImGenie_ShowDemoWindow(bool* apoOpen, ImGenieParams* apoParams, ImGenieParams* apoDefaultParams);
+IMGENIE_C_API bool ImGenie_Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams* apParams);
+IMGENIE_C_API bool ImGenie_Begin(const char* aWindowName, bool* apoOpen, int aFlags, const ImGenieParams* apParams);
 IMGENIE_C_API void ImGenie_End(void);
