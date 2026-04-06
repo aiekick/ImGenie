@@ -348,6 +348,19 @@ static void s_latticeAnimate(ImDrawList* apDrawList,
 
 // ---------- Utility ----------
 
+// Recursively add DrawLists from all child windows to the given ImDrawData.
+// Children are added in depth-first order (parent before its children),
+// which matches ImGui's own rendering order.
+static void s_addChildDrawLists(const ImGuiWindow* apWin, ImDrawData* apDrawData) {
+    for (int i = 0; i < apWin->DC.ChildWindows.Size; ++i) {
+        const ImGuiWindow* child = apWin->DC.ChildWindows[i];
+        if (child != nullptr && child->DrawList != nullptr && child->DrawList->CmdBuffer.Size > 0) {
+            apDrawData->AddDrawList(child->DrawList);
+            s_addChildDrawLists(child, apDrawData);
+        }
+    }
+}
+
 // Build an ImDrawData from a window's DrawList and call the user-provided capture callback.
 // This isolates the user from ImGui internals: they just receive (width, height, drawData).
 static ImTextureRef s_captureWindow(const ImGuiWindow* apWin, ImDrawData* apMainDrawData) {
@@ -370,6 +383,7 @@ static ImTextureRef s_captureWindow(const ImGuiWindow* apWin, ImDrawData* apMain
     offscreenData.OwnerViewport = ImGui::GetMainViewport();
     offscreenData.Textures = (apMainDrawData != nullptr) ? apMainDrawData->Textures : nullptr;
     offscreenData.AddDrawList(apWin->DrawList);
+    s_addChildDrawLists(apWin, &offscreenData);
     return s_ctx->createCaptureFunc(w, h, &offscreenData);
 }
 
@@ -396,6 +410,17 @@ static void s_removeDrawListFromDrawData(ImDrawData* apDrawData, ImDrawList* apD
             apDrawData->CmdLists.erase(apDrawData->CmdLists.Data + i);
             apDrawData->CmdListsCount--;
             break;
+        }
+    }
+}
+
+// Recursively remove DrawLists of all child windows from the main ImDrawData.
+static void s_removeChildDrawListsFromDrawData(ImDrawData* apDrawData, const ImGuiWindow* apWin) {
+    for (int i = 0; i < apWin->DC.ChildWindows.Size; ++i) {
+        const ImGuiWindow* child = apWin->DC.ChildWindows[i];
+        if (child != nullptr && child->DrawList != nullptr) {
+            s_removeDrawListFromDrawData(apDrawData, child->DrawList);
+            s_removeChildDrawListsFromDrawData(apDrawData, child);
         }
     }
 }
@@ -911,6 +936,7 @@ void ImGenie::Capture() {
             }
             // Hide real window this frame (the mesh animation replaces it)
             s_removeDrawListFromDrawData(pMainDrawData, pWin->DrawList);
+            s_removeChildDrawListsFromDrawData(pMainDrawData, pWin);
         }
 
         // --- Wobbly move: capture window into FBO on first drag frame ---
@@ -945,6 +971,7 @@ void ImGenie::Capture() {
             auto* pWin = ImGui::FindWindowByName(nameIt->second);
             if (pWin != nullptr && pWin->DrawList != nullptr) {
                 s_removeDrawListFromDrawData(pMainDrawData, pWin->DrawList);
+                s_removeChildDrawListsFromDrawData(pMainDrawData, pWin);
             }
         }
 
