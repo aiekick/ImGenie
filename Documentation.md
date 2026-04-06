@@ -24,6 +24,9 @@ macOS-style Genie effect, Page Curl transition and Wobbly windows for [Dear ImGu
 
 - **Genie transition**: macOS-style minimize/restore animation toward a target rect (dock icon, button, etc.)
 - **Page Curl transition**: Page curl/unroll appear/disappear animation with configurable origin (corners and edges)
+- **Fade transition**: Alpha fade in/out
+- **Scale transition**: Zoom in/out from window center
+- **Slide transition**: Slide off-screen toward edges or corners, with optional wobbly spring-based elastic stretch
 - **Wobbly windows effect**: Spring-based window deformation when dragging
 
 Transitions and effects are independent: transitions control appear/disappear animations, effects control runtime behavior (e.g. wobbly drag).
@@ -146,6 +149,15 @@ Controlled by `settings.transitions.transitionMode`:
 | `ImGenieTransitionMode_None` | No transition, instant show/hide |
 | `ImGenieTransitionMode_Genie` | macOS-style genie animation toward a target rect |
 | `ImGenieTransitionMode_PageCurl` | Page curl animation from a configurable origin |
+| `ImGenieTransitionMode_Fade` | Alpha fade in/out |
+| `ImGenieTransitionMode_Scale` | Zoom in/out from window center |
+| `ImGenieTransitionMode_Slide` | Slide off-screen in a configurable direction |
+
+#### Common parameters (`settings.transitions`)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `animDuration` | `float` | 0.4s | Animation duration in seconds (shared by all transitions) |
 
 #### Genie parameters (`settings.transitions.genie`)
 
@@ -153,7 +165,6 @@ Controlled by `settings.transitions.transitionMode`:
 |---|---|---|---|
 | `cellsV` | `int32_t` | 20 | Vertical mesh subdivisions |
 | `cellsH` | `int32_t` | 1 | Horizontal mesh subdivisions |
-| `animDuration` | `float` | 0.5s | Animation duration in seconds |
 | `side` | `ImGenieSide` | Auto | Side the window collapses toward |
 | `animMode` | `ImGenieAnimMode` | Compress | UV mapping mode (Compress or Sliding) |
 | `destRect` | `ImGenie_Rect` | {0,0,0,0} | Target rect the window animates to/from (update every frame) |
@@ -164,8 +175,27 @@ Controlled by `settings.transitions.transitionMode`:
 |---|---|---|---|
 | `cellsH` | `int32_t` | 30 | Horizontal mesh subdivisions |
 | `cellsV` | `int32_t` | 30 | Vertical mesh subdivisions |
-| `animDuration` | `float` | 0.4s | Animation duration in seconds |
 | `origin` | `ImGeniePageCurlOrigin` | BottomLeft | Corner or edge the curl starts from |
+
+#### Fade parameters
+
+No specific parameters. Uses common `animDuration`.
+
+#### Scale parameters
+
+No specific parameters. Uses common `animDuration`. Zooms from/to the window center.
+
+#### Slide parameters (`settings.transitions.slide`)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `dir` | `ImGenieSlideDir` | Auto | Direction the window slides to when disappearing |
+| `wobbly` | `bool` | false | Enable spring-based elastic stretch during slide (leading corner(s) move, trailing follow via springs) |
+| `spring.stiffness` | `float` | 120.0 | Spring stiffness (wobbly slide only) |
+| `spring.damping` | `float` | 8.0 | Spring damping (wobbly slide only) |
+| `spring.substeps` | `int32_t` | 8 | Physics substeps per frame (wobbly slide only) |
+| `spring.cellsH` | `int32_t` | 20 | Horizontal mesh subdivisions (wobbly slide only) |
+| `spring.cellsV` | `int32_t` | 20 | Vertical mesh subdivisions (wobbly slide only) |
 
 ### Effects
 
@@ -180,12 +210,12 @@ Controlled by `settings.effects.effectMode`:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `cellsV` | `int32_t` | 20 | Vertical mesh subdivisions |
-| `cellsH` | `int32_t` | 20 | Horizontal mesh subdivisions |
-| `maxStiffness` | `float` | 200.0 | Maximum spring stiffness |
-| `minStiffness` | `float` | 50.0 | Minimum spring stiffness |
-| `damping` | `float` | 10.0 | Spring damping factor |
-| `substeps` | `int32_t` | 8 | Physics substeps per frame |
+| `spring.cellsH` | `int32_t` | 20 | Horizontal mesh subdivisions |
+| `spring.cellsV` | `int32_t` | 20 | Vertical mesh subdivisions |
+| `spring.stiffness` | `float` | 120.0 | Minimum spring stiffness (far from grab point) |
+| `spring.damping` | `float` | 8.0 | Spring damping factor |
+| `spring.substeps` | `int32_t` | 8 | Physics substeps per frame |
+| `maxStiffness` | `float` | 200.0 | Maximum spring stiffness (at grab point) |
 | `settleDuration` | `float` | 0.15s | Duration of settle animation after drag ends |
 
 ## Enums
@@ -225,6 +255,44 @@ Origin corner or edge for the Page Curl transition.
 | `ImGeniePageCurlOrigin_Bottom` | Curl from bottom edge |
 | `ImGeniePageCurlOrigin_BottomLeft` | Curl from bottom-left corner |
 | `ImGeniePageCurlOrigin_Left` | Curl from left edge |
+
+### ImGenieSlideDir
+
+Direction for the Slide transition.
+
+| Value | Description |
+|---|---|
+| `ImGenieSlideDir_Auto` | Auto-detect closest viewport edge or corner |
+| `ImGenieSlideDir_AutoEdge` | Auto-detect closest viewport edge only |
+| `ImGenieSlideDir_AutoCorner` | Auto-detect closest viewport corner only |
+| `ImGenieSlideDir_Left` | Slide toward left edge |
+| `ImGenieSlideDir_Right` | Slide toward right edge |
+| `ImGenieSlideDir_Up` | Slide toward top edge |
+| `ImGenieSlideDir_Down` | Slide toward bottom edge |
+| `ImGenieSlideDir_TopLeft` | Slide toward top-left corner |
+| `ImGenieSlideDir_TopRight` | Slide toward top-right corner |
+| `ImGenieSlideDir_BottomLeft` | Slide toward bottom-left corner |
+| `ImGenieSlideDir_BottomRight` | Slide toward bottom-right corner |
+
+For edge directions, 2 corners are pinned (the leading edge). For corner directions, only 1 corner is pinned — the other 3 follow via springs when wobbly is enabled.
+
+### ImGenieTransitionMode
+
+| Value | Description |
+|---|---|
+| `ImGenieTransitionMode_None` | No transition, instant show/hide |
+| `ImGenieTransitionMode_Genie` | macOS-style genie animation toward a target rect |
+| `ImGenieTransitionMode_PageCurl` | Page curl animation from a configurable origin |
+| `ImGenieTransitionMode_Fade` | Alpha fade in/out |
+| `ImGenieTransitionMode_Scale` | Zoom in/out from window center |
+| `ImGenieTransitionMode_Slide` | Slide off-screen in a configurable direction |
+
+### ImGenieEffectMode
+
+| Value | Description |
+|---|---|
+| `ImGenieEffectMode_None` | No runtime effect |
+| `ImGenieEffectMode_Wobbly` | Spring-based deformation when dragging |
 
 ## C API
 

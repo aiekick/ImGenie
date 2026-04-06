@@ -61,6 +61,9 @@ enum ImGenieTransitionMode_ {
     ImGenieTransitionMode_None = 0,
     ImGenieTransitionMode_Genie,
     ImGenieTransitionMode_PageCurl,
+    ImGenieTransitionMode_Fade,
+    ImGenieTransitionMode_Scale,
+    ImGenieTransitionMode_Slide,
 };
 
 typedef int ImGeniePageCurlOrigin;
@@ -94,44 +97,75 @@ typedef struct ImGenie_Rect {
 typedef struct ImGenieGenieParams {
     int32_t cellsV;
     int32_t cellsH;
-    float animDuration;
     ImGenieSide side;
     ImGenieAnimMode animMode;
     ImGenie_Rect destRect;  // Target rect the window animates to/from (update every frame)
 #ifdef __cplusplus
-    ImGenieGenieParams() : cellsV(20), cellsH(1), animDuration(0.5f), side(ImGenieSide_Auto), animMode(ImGenieAnimMode_Compress), destRect{} {}
+    ImGenieGenieParams() : cellsV(20), cellsH(1), side(ImGenieSide_Auto), animMode(ImGenieAnimMode_Compress), destRect{} {}
 #endif
 } ImGenieGenieParams;
 
 typedef struct ImGeniePageCurlParams {
     int32_t cellsH;
     int32_t cellsV;
-    float animDuration;
     ImGeniePageCurlOrigin origin;
 #ifdef __cplusplus
-    ImGeniePageCurlParams() : cellsH(30), cellsV(30), animDuration(0.4f), origin(ImGeniePageCurlOrigin_BottomLeft) {}
+    ImGeniePageCurlParams() : cellsH(30), cellsV(30), origin(ImGeniePageCurlOrigin_BottomLeft) {}
 #endif
 } ImGeniePageCurlParams;
 
-typedef struct ImGenieWobblyParams {
-    int32_t cellsV;
-    int32_t cellsH;
-    float maxStiffness;
-    float minStiffness;
+typedef int ImGenieSlideDir;
+enum ImGenieSlideDir_ {
+    ImGenieSlideDir_Auto = 0,       // Auto-detect closest edge or corner
+    ImGenieSlideDir_AutoEdge,       // Auto-detect closest edge only
+    ImGenieSlideDir_AutoCorner,     // Auto-detect closest corner only
+    ImGenieSlideDir_Left,
+    ImGenieSlideDir_Right,
+    ImGenieSlideDir_Up,
+    ImGenieSlideDir_Down,
+    ImGenieSlideDir_TopLeft,
+    ImGenieSlideDir_TopRight,
+    ImGenieSlideDir_BottomLeft,
+    ImGenieSlideDir_BottomRight,
+};
+
+typedef struct ImGenieSpringParams {
+    float stiffness;
     float damping;
     int32_t substeps;
+    int32_t cellsH;
+    int32_t cellsV;
+#ifdef __cplusplus
+    ImGenieSpringParams() : stiffness(120.0f), damping(8.0f), substeps(8), cellsH(20), cellsV(20) {}
+#endif
+} ImGenieSpringParams;
+
+typedef struct ImGenieSlideParams {
+    ImGenieSlideDir dir;
+    bool wobbly;              // Trailing edge follows via spring physics (rubber stretch)
+    ImGenieSpringParams spring;
+#ifdef __cplusplus
+    ImGenieSlideParams() : dir(ImGenieSlideDir_Auto), wobbly(false), spring() {}
+#endif
+} ImGenieSlideParams;
+
+typedef struct ImGenieWobblyParams {
+    ImGenieSpringParams spring;
+    float maxStiffness;       // Overrides spring.stiffness at grab point (varies with distance)
     float settleDuration;
 #ifdef __cplusplus
-    ImGenieWobblyParams() : cellsV(20), cellsH(20), maxStiffness(200.0f), minStiffness(50.0f), damping(10.0f), substeps(8), settleDuration(0.15f) {}
+    ImGenieWobblyParams() : spring(), maxStiffness(200.0f), settleDuration(0.15f) {}
 #endif
 } ImGenieWobblyParams;
 
 typedef struct ImGenieTransitions {
     ImGenieTransitionMode transitionMode;
+    float animDuration;  // Common to all transitions
     ImGenieGenieParams genie;
     ImGeniePageCurlParams pageCurl;
+    ImGenieSlideParams slide;
 #ifdef __cplusplus
-    ImGenieTransitions() : transitionMode(ImGenieTransitionMode_Genie), genie(), pageCurl() {}
+    ImGenieTransitions() : transitionMode(ImGenieTransitionMode_Genie), animDuration(0.4f), genie(), pageCurl(), slide() {}
 #endif
 } ImGenieTransitions;
 
