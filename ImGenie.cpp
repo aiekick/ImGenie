@@ -858,6 +858,19 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
         const auto& dr = params.transitions.genie.destRect;
         effect.destRect = ImRect(dr.minX, dr.minY, dr.maxX, dr.maxY);
 
+        // --- Mid-animation reversal ---
+        // If the user toggles the open state while an animation is playing, reverse direction.
+        // Guard animT > 0 to skip the first frame after Captured fall-through (where *apoOpen is stale).
+        if (effect.state == ImGenieEffect::State::Animating && effect.animT > 0.0f && *apoOpen) {
+            // Disappearing → user wants to re-open → reverse to appearing
+            effect.state = ImGenieEffect::State::AppearingAnimating;
+            effect.animT = 1.0f - effect.animT;
+        } else if (effect.state == ImGenieEffect::State::AppearingAnimating && effect.animT > 0.0f && !*apoOpen) {
+            // Appearing → user wants to close → reverse to disappearing
+            effect.state = ImGenieEffect::State::Animating;
+            effect.animT = 1.0f - effect.animT;
+        }
+
         // --- Disappearance: capture frame ---
         // Keep window open one more frame so Capture() can snapshot its DrawList
         if (effect.state == ImGenieEffect::State::PendingCapture) {
@@ -1105,7 +1118,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                                  ctx.captureFlipV);
             }
             s_drawDebug(pDrawList, effect);
-            *apoOpen = false;
+            *apoOpen = true;  // Appearing: report "open" so user can toggle to false to reverse
             return false;
         }
 
