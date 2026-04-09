@@ -811,6 +811,16 @@ bool ImGenie::IsEffectActive(const char* aWindowName) {
     return it != s_ctx->effects.end();
 }
 
+void ImGenie::Close(const char* aWindowName) {
+    if (!aWindowName || !s_ctx) return;
+    s_ctx->internalOpenStates[ImHashStr(aWindowName)] = false;
+}
+
+void ImGenie::Open(const char* aWindowName) {
+    if (!aWindowName || !s_ctx) return;
+    s_ctx->internalOpenStates[ImHashStr(aWindowName)] = true;
+}
+
 void ImGenie::SetCurrentContext(ImGenieContext* apCtx) { s_ctx = apCtx; }
 
 void ImGenie::SetCreateCaptureFunc(const CreateCaptureFunctor& arFunc) {
@@ -844,10 +854,18 @@ void ImGenie::SetCaptureFlipV(bool aFlipV) {
 // Returns false if ImGenie is handling the window (animating).
 bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams* apParams) {
     IM_ASSERT(s_ctx && "The context is null");
-    if (aWindowName == nullptr || apoOpen == nullptr) { return true; }
+    if (aWindowName == nullptr) { return true; }
     auto& ctx = *s_ctx;
     const auto& params = apParams ? *apParams : ctx.globalParams;
     const auto id = ImHashStr(aWindowName);
+    // If no external bool, use internal open state (default: open)
+    bool* pOpen = apoOpen;
+    if (pOpen == nullptr) {
+        if (ctx.internalOpenStates.find(id) == ctx.internalOpenStates.end()) {
+            ctx.internalOpenStates[id] = true;
+        }
+        pOpen = &ctx.internalOpenStates[id];
+    }
     auto it = ctx.effects.find(id);
 
     // ==================== Active effect handling ====================
@@ -860,12 +878,12 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
 
         // --- Mid-animation reversal ---
         // If the user toggles the open state while an animation is playing, reverse direction.
-        // Guard animT > 0 to skip the first frame after Captured fall-through (where *apoOpen is stale).
-        if (effect.state == ImGenieEffect::State::Animating && effect.animT > 0.0f && *apoOpen) {
+        // Guard animT > 0 to skip the first frame after Captured fall-through (where *pOpen is stale).
+        if (effect.state == ImGenieEffect::State::Animating && effect.animT > 0.0f && *pOpen) {
             // Disappearing → user wants to re-open → reverse to appearing
             effect.state = ImGenieEffect::State::AppearingAnimating;
             effect.animT = 1.0f - effect.animT;
-        } else if (effect.state == ImGenieEffect::State::AppearingAnimating && effect.animT > 0.0f && !*apoOpen) {
+        } else if (effect.state == ImGenieEffect::State::AppearingAnimating && effect.animT > 0.0f && !*pOpen) {
             // Appearing → user wants to close → reverse to disappearing
             effect.state = ImGenieEffect::State::Animating;
             effect.animT = 1.0f - effect.animT;
@@ -874,7 +892,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
         // --- Disappearance: capture frame ---
         // Keep window open one more frame so Capture() can snapshot its DrawList
         if (effect.state == ImGenieEffect::State::PendingCapture) {
-            *apoOpen = true;
+            *pOpen = true;
             return true;
         }
 
@@ -901,7 +919,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                 s_deleteEffectTexture(effect);
                 ctx.effectNames.erase(id);
                 ctx.effects.erase(it);
-                *apoOpen = false;
+                *pOpen = false;
                 return true;
             }
             auto* pDrawList = ImGui::GetForegroundDrawList();
@@ -1002,14 +1020,14 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                                  ctx.captureFlipV);
             }
             s_drawDebug(pDrawList, effect);
-            *apoOpen = false;
+            *pOpen = false;
             return false;
         }
 
         // --- Appearance: capture frame ---
         // Keep window open so Capture() can snapshot its first rendered frame
         if (effect.state == ImGenieEffect::State::AppearingCapture) {
-            *apoOpen = true;
+            *pOpen = true;
             return true;
         }
 
@@ -1021,7 +1039,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                 s_deleteEffectTexture(effect);
                 ctx.effectNames.erase(id);
                 ctx.effects.erase(it);
-                *apoOpen = true;
+                *pOpen = true;
                 ctx.openStates[id] = true;
                 return true;
             }
@@ -1118,7 +1136,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
                                  ctx.captureFlipV);
             }
             s_drawDebug(pDrawList, effect);
-            *apoOpen = true;  // Appearing: report "open" so user can toggle to false to reverse
+            *pOpen = true;  // Appearing: report "open" so user can toggle to false to reverse
             return false;
         }
 
@@ -1225,10 +1243,10 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
     auto wasOpen = false;
     const auto stateIt = ctx.openStates.find(id);
     if (stateIt != ctx.openStates.end()) { wasOpen = stateIt->second; }
-    ctx.openStates[id] = *apoOpen;
+    ctx.openStates[id] = *pOpen;
 
     // --- Detect disappearance: window was open, now closed ---
-    if (wasOpen && !(*apoOpen)) {
+    if (wasOpen && !(*pOpen)) {
         if (params.transitions.transitionMode == ImGenieTransitionMode_None) {
             return true;  // No effect enabled: let window close instantly
         }
@@ -1248,13 +1266,13 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
             ctx.effects[id] = effect;
             ctx.effectNames[id] = aWindowName;
             // Keep window open one more frame for capture
-            *apoOpen = true;
+            *pOpen = true;
             return true;
         }
     }
 
     // --- Detect appearance: window was closed, now open ---
-    if (!wasOpen && *apoOpen) {
+    if (!wasOpen && *pOpen) {
         if (params.transitions.transitionMode == ImGenieTransitionMode_None) {
             return true;  // No effect enabled: let window appear instantly
         }
@@ -1267,7 +1285,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
         if (pWin != nullptr) { pWin->HiddenFramesCannotSkipItems = 1; }
         ctx.effects[id] = effect;
         ctx.effectNames[id] = aWindowName;
-        *apoOpen = true;
+        *pOpen = true;
         return true;
     }
 
@@ -1275,7 +1293,7 @@ bool ImGenie::Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams*
     // Frame 1: MovingWindow matches this window → record initial position in dragStartPos.
     // Frame 2: if pWin->Pos has changed since recorded position → real drag confirmed.
     // This two-frame delay avoids triggering on a simple click (no movement).
-    if (*apoOpen && params.effects.effectMode == ImGenieEffectMode_Wobbly) {
+    if (*pOpen && params.effects.effectMode == ImGenieEffectMode_Wobbly) {
         const auto& g = *GImGui;
         auto* pWin = ImGui::FindWindowByName(aWindowName);
         if (pWin != nullptr && g.MovingWindow != nullptr) {
@@ -1320,10 +1338,19 @@ bool ImGenie::Begin(const char* aWindowName, bool* apoOpen, ImGuiWindowFlags aFl
     if (!Allow(aWindowName, apoOpen, apParams)) {
         return false;  // ImGenie is animating, don't draw
     }
-    if (apoOpen != nullptr && !(*apoOpen)) {
-        return false;  // Window is closed
+    if (apoOpen != nullptr) {
+        if (!(*apoOpen)) return false;  // Window is closed (external bool)
+    } else if (aWindowName != nullptr) {
+        // No external bool: check internal open state
+        const auto id = ImHashStr(aWindowName);
+        auto it = s_ctx->internalOpenStates.find(id);
+        if (it != s_ctx->internalOpenStates.end() && !it->second) return false;
     }
-    return ImGui::Begin(aWindowName, apoOpen, aFlags);
+    if (!ImGui::Begin(aWindowName, apoOpen, aFlags)) {
+        ImGui::End();
+        return false;
+    }
+    return true;
 }
 
 void ImGenie::End() { ImGui::End(); }
@@ -1704,6 +1731,8 @@ IMGENIE_C_API void ImGenie_SetCaptureFlipV(bool aFlipV) { ImGenie::SetCaptureFli
 IMGENIE_C_API void ImGenie_Capture(void) { ImGenie::Capture(); }
 IMGENIE_C_API bool ImGenie_HasActiveEffects(void) { return ImGenie::HasActiveEffects(); }
 IMGENIE_C_API bool ImGenie_IsEffectActive(const char* aWindowName) { return ImGenie::IsEffectActive(aWindowName); }
+IMGENIE_C_API void ImGenie_Close(const char* aWindowName) { ImGenie::Close(aWindowName); }
+IMGENIE_C_API void ImGenie_Open(const char* aWindowName) { ImGenie::Open(aWindowName); }
 static ImRect s_toRect(const ImGenie_Rect* apRect) { return ImRect(apRect->minX, apRect->minY, apRect->maxX, apRect->maxY); }
 IMGENIE_C_API ImGenieParams* ImGenie_DefaultParams(void) {
     static ImGenieParams s_defaults{};

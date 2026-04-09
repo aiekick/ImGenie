@@ -17,6 +17,8 @@ macOS-style Genie effect, Page Curl transition and Wobbly windows for [Dear ImGu
   - [Transitions](#transitions)
   - [Effects](#effects)
 - [Enums](#enums)
+- [Windows without bool\* p\_open](#windows-without-bool-p_open)
+- [Mid-animation reversal](#mid-animation-reversal)
 - [C API](#c-api)
 - [Defines](#defines)
 
@@ -28,6 +30,8 @@ macOS-style Genie effect, Page Curl transition and Wobbly windows for [Dear ImGu
 - **Scale transition**: Zoom in/out from window center
 - **Slide transition**: Slide off-screen toward edges or corners, with optional wobbly spring-based elastic stretch
 - **Wobbly windows effect**: Spring-based window deformation when dragging
+- **Mid-animation reversal**: Toggling a window open/close during an animation instantly reverses its direction
+- **Windows without `bool* p_open`**: Full animation support via `ImGenie::Close()` / `ImGenie::Open()` API
 
 Transitions and effects are independent: transitions control appear/disappear animations, effects control runtime behavior (e.g. wobbly drag).
 
@@ -89,7 +93,7 @@ ImGui::DestroyContext();
 
 `ImGenie::Begin` / `ImGenie::End` wraps `ImGui::Begin` / `ImGui::End` and handles the effect automatically.
 
-**Important**: unlike `ImGui::Begin`/`End`, you must only call `ImGenie::End()` when `ImGenie::Begin()` returned `true`.
+**Important**: unlike `ImGui::Begin`/`End`, you must only call `ImGenie::End()` when `ImGenie::Begin()` returned `true`. `ImGenie::Begin()` handles collapsed windows internally (calls `ImGui::End()` when the window is collapsed), so you don't need to worry about Begin/End stack balance.
 
 ```cpp
 // For genie transition: set the target rect the window animates to/from
@@ -127,6 +131,52 @@ if (ImGenie::Allow("My Window", &show, &params)) {
     }
 }
 ```
+
+### Windows without bool* p_open
+
+By default, ImGui's `bool* p_open` parameter controls the close button in the title bar. ImGenie can animate windows even without a `bool*` — it manages an internal open/close state per window.
+
+Use `ImGenie::Close()` and `ImGenie::Open()` to trigger transitions:
+
+```cpp
+// Simple window without bool* p_open
+if (ImGenie::Begin("My Window")) {
+    ImGui::Text("Hello!");
+    ImGenie::End();
+}
+
+// Trigger close animation from a button, menu, etc.
+if (ImGui::Button("Hide Window")) {
+    ImGenie::Close("My Window");
+}
+
+// Trigger open animation
+if (ImGui::Button("Show Window")) {
+    ImGenie::Open("My Window");
+}
+```
+
+With `Allow`:
+
+```cpp
+if (ImGenie::Allow("My Window", nullptr, &params)) {
+    ImGui::Begin("My Window");
+    ImGui::Text("Hello!");
+    ImGui::End();
+}
+
+// Control visibility externally
+ImGenie::Close("My Window");  // triggers disappear animation
+ImGenie::Open("My Window");   // triggers appear animation
+```
+
+The internal state defaults to `true` (open). When `Close()` is called, the next frame detects the transition and starts the disappear animation. `Open()` does the reverse.
+
+### Mid-animation reversal
+
+If the user toggles a window's visibility while an animation is still playing, ImGenie instantly reverses the animation direction. The animation continues smoothly from the current position — no need to wait for it to complete.
+
+This works both with `bool* p_open` (toggling the bool) and with `Close()` / `Open()` (calling the opposite function mid-animation).
 
 ## Settings
 
@@ -313,6 +363,8 @@ params->transitions.pageCurl.origin = ImGeniePageCurlOrigin_TopRight;
 | `ImGenie::Capture()` | `ImGenie_Capture()` |
 | `ImGenie::HasActiveEffects()` | `ImGenie_HasActiveEffects()` |
 | `ImGenie::IsEffectActive(name)` | `ImGenie_IsEffectActive(name)` |
+| `ImGenie::Close(name)` | `ImGenie_Close(name)` |
+| `ImGenie::Open(name)` | `ImGenie_Open(name)` |
 | `ImGenie::ShowDemoWindow(...)` | `ImGenie_ShowDemoWindow(...)` |
 | `ImGenie::Allow(...)` | `ImGenie_Allow(...)` |
 | `ImGenie::Begin(...)` / `End()` | `ImGenie_Begin(...)` / `ImGenie_End()` |

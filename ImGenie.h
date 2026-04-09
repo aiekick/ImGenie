@@ -243,6 +243,7 @@ struct ImGenieContext {
     std::unordered_map<ImGuiID, bool> openStates{};
     std::unordered_map<ImGuiID, const char*> effectNames{};
     std::unordered_map<ImGuiID, ImVec2> dragStartPos{};
+    std::unordered_map<ImGuiID, bool> internalOpenStates{};  // For windows without bool* p_open
     CreateCaptureFunctor createCaptureFunc{};
     DestroyCaptureFunctor destroyCaptureFunc{};
     bool captureFlipV{false};  // OpenGL needs true (Y-axis inverted), Vulkan/Metal/DX12 = false
@@ -275,6 +276,11 @@ IMGENIE_API bool HasActiveEffects();
 
 // Return true if an effect is active on this aWindowName
 IMGENIE_API bool IsEffectActive(const char* aWindowName);
+
+// Trigger close/open animation for windows that don't use a bool* p_open.
+// These set the internal open state; the transition is detected by Allow() on the next frame.
+IMGENIE_API void Close(const char* aWindowName);
+IMGENIE_API void Open(const char* aWindowName);
 
 // Show the demo window
 IMGENIE_API void ShowDemoWindow(bool* apoOpen = nullptr, ImGenieParams* apoParams = nullptr, ImGenieParams* apoDefaultParams = nullptr);
@@ -328,6 +334,8 @@ IMGENIE_C_API void ImGenie_SetCaptureFlipV(bool aFlipV);
 IMGENIE_C_API void ImGenie_Capture(void);
 IMGENIE_C_API bool ImGenie_HasActiveEffects(void);
 IMGENIE_C_API bool ImGenie_IsEffectActive(const char* aWindowName);
+IMGENIE_C_API void ImGenie_Close(const char* aWindowName);
+IMGENIE_C_API void ImGenie_Open(const char* aWindowName);
 IMGENIE_C_API ImGenieParams* ImGenie_DefaultParams(void);
 IMGENIE_C_API void ImGenie_ShowDemoWindow(bool* apoOpen, ImGenieParams* apoParams, ImGenieParams* apoDefaultParams);
 IMGENIE_C_API bool ImGenie_Allow(const char* aWindowName, bool* apoOpen, const ImGenieParams* apParams);
